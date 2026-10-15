@@ -1,0 +1,13 @@
+# игровые данные и большие клоны — не в наш репозиторий
+iso/
+pc/
+ghidra-mcp/
+librw/
+mh-replayed/
+jdk21/
+*.iso
+*.7z
+*.jar
+*.gpr
+target/
+build/
