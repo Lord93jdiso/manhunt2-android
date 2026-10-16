@@ -1,7 +1,7 @@
 # Manhunt 2 → ARM64/Android — рабочий каталог проекта
 
-**Обновлено:** 2026-10-15
-**Статус:** Этап 0 — рекогносцировка и инструменты
+**Обновлено:** 2026-10-16
+**Статус:** Этап 1 — анализ `Manhunt2.exe` в Ghidra (идёт) + облачный CI (librw+SDL3 под Android — отладка сборки)
 
 ## Цель
 Нативный порт Manhunt 2 на ARM64 (Android). Референс методологии: LibertyRecomp /
@@ -77,16 +77,17 @@ manhunt2-port/
 | `.dir` | высокая энтропия | зашифрованные/сжатые каталоги (`Executions.dir`, `Scripted.dir`) |
 
 Примечания: уровни `levels/A01..A18` содержат `modelspc.mdl+tex`, `scene*_pc.bsp(+tex)`, `picload_pc.tex`, `resource*.glg`, `allanims_pc.ifp`, `collisions_pc.col`, `entity_pc.inst`, `*_pc.grf`, `mat_pc.bin`, `strmanim_pc.bin`, `<Level>.mls`, `lipsync.lsd`, `speech.lst`.
+Уточнения (2026-10-16): `resource1-3.glg` — тоже Z2HM-бандлы уровня (`5a32 484d` в заголовке); `collisions_pc.col` = u32-количество + NUL-строки имён (`a16_*_StaticProp.ppp`) + float-записи; в `global/` лежат `game.gxt`, `game.scc`, `ini/`, `initscripts/`, модели/текстуры персонажей.
 
 ## Следующие шаги
-1. [сейчас] Завершить распаковку PC-архива; распаковать `NoCD.7z`; классифицировать форматы по сигнатурам.
-2. Ghidra: headless-импорт Manhunt2.exe с анализом → открыть проект в GUI с GhidraMCPPlugin.
-3. librw: собрать demo под Linux x86; написать загрузчики форматов Manhunt 2 (по мере реверса).
-4. Android-скелет: SDL3 (окно/ввод/аудио) + GLES3 + ≥30 FPS цель; тач-управление.
-5. Декомпиляция ядра логики (ghidra-mcp + субагенты): вход → рендер-цикл → менеджер уровней.
+1. [идёт] Ghidra: полный автоанализ `Manhunt2.exe` (фон) → карта функций, entry, assert-`__FILE__`-константы, RTTI↔vtable.
+2. [идёт] CI: зелёная сборка `librw.a` + `libSDL3.so` под arm64 → далее workflow Android-скелета (SDL3+GLES3, «первая картинка»).
+3. Загрузчики форматов Manhunt 2 в порт (Z2HM → PMLC/TCDT/BSP/IFP/MHLS/COL/GXT) — по мере декомпиляции.
+4. Декомпиляция ядра логики (ghidra-mcp + субагенты): вход → рендер-цикл → менеджер уровней → скрипт-VM.
+5. Renderer: GLES3 bring-up → Vulkan (`rw_vulkan` или ANGLE-over-Vulkan); шейдеры `.fxo` → GLSL/SPIR-V.
 
 ## Хроника
-- **2026-10-16** — рестарт сессии отменил импорт в проект `mh2` (на середине); анализ перезапущен (фон, nice 10). Решения дня: рендер → **Vulkan**; сборки → **GitHub Actions (облако)**; заведён private-репозиторий (https://github.com/Lord93jdiso/manhunt2-android) и CI-workflow сборки librw+SDL3 под Android arm64.
+- **2026-10-16** — восстановление после рестарта: анализ `Manhunt2.exe` перезапущен (импорт дал `reused_existing` → сработал форс-`reanalyze`; идёт в фоне, nice 10; уже 12.5к+ функций и растёт). Решения дня: рендер → **Vulkan**; сборки → **GitHub Actions (облако)**. Создан private-репозиторий https://github.com/Lord93jdiso/manhunt2-android + CI `build-librw-android` (librw+SDL3, arm64): прогон 1 — SDL3 собран, librw упал на поиске SDL3 (NDK re-rooting) → фикс `CMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH` + `SDL3_DIR`; прогон 2 — запущен. Находки из строк exe: сборочный путь `W:\Manhunt2_PC\Code\src\...`, DXUT-каркас, `neo::`-фронтенд → `docs/strings_notes.md` + `docs/rtti_classes.txt` (328 имён). `.glg` подтверждён как Z2HM-бандл уровня.
 - **2026-10-15** — разведка и инструменты: PC-база выбрана; поднят GhidraMCP headless-сервер (:8089, UDS-сокет) + расширение под Ghidra 12.1.2 DEV; создан постоянный проект `ghidra-projects/mh2`; запущен импорт `Manhunt2.exe` с полным автоанализом.
   Находки: контейнеры данных `Z2HM`+zlib (внутри PMLC/TCDT/DLRW/ANCT/MHLS); 328 RTTI-имён C++ классов (`cAI_*`, `aAI_*`, `CGraphPath`, …); COFF-символов нет; импорты: d3dx9_35, fmodex/fmod_event, binkw32, DINPUT8.
 
