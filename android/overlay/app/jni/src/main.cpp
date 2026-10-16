@@ -83,7 +83,7 @@ int main(int argc, char *argv[])
     cam->frameBuffer = Raster::create(w, h, 0, Raster::CAMERA);
     cam->zBuffer = Raster::create(w, h, 0, Raster::ZBUFFER);
     cam->setFarPlane(1000.0f);
-    Camera::setCurrent(cam);
+    // текущую камеру выставляет сам beginUpdate() (defaultBeginUpdateCB → engine->currentCamera)
 
     bool running = true;
     Uint64 t0 = SDL_GetTicks();
@@ -111,7 +111,6 @@ int main(int argc, char *argv[])
         SDL_Delay(16);
     }
 
-    Camera::setCurrent(nil);
     cam->frameBuffer->destroy();
     cam->zBuffer->destroy();
     Frame *f = cam->getFrame();
