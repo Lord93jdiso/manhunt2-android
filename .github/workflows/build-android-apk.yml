@@ -54,6 +54,8 @@ jobs:
         env:
           SDL3_DIR: ${{ runner.temp }}/sdl3/lib/cmake/SDL3
         run: |
+          echo "SDL3_DIR=$SDL3_DIR"
+          ls -la "$SDL3_DIR" || true
           cd build-app
           chmod +x gradlew
           ./gradlew --no-daemon assembleDebug

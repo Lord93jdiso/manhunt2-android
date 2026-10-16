@@ -13,7 +13,17 @@ android {
         versionName "0.1-bringup"
         externalNativeBuild {
             cmake {
-                arguments "-DANDROID_PLATFORM=android-24", "-DANDROID_STL=c++_static"
+                def cmakeArgs = [
+                    "-DANDROID_PLATFORM=android-24",
+                    "-DANDROID_STL=c++_static",
+                    // NDK-тулчейн ре-рутит поиск пакетов: без BOTH find_package(SDL3) не виден
+                    "-DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH",
+                ]
+                def sdl3Dir = System.getenv('SDL3_DIR')
+                if (sdl3Dir != null && !sdl3Dir.isEmpty()) {
+                    cmakeArgs += "-DSDL3_DIR=${sdl3Dir}"
+                }
+                arguments = cmakeArgs
                 abiFilters 'arm64-v8a'
             }
         }
