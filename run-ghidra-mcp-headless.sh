@@ -6,11 +6,15 @@ export JAVA_HOME="$HOME/.local/jdk21"
 GH="${GHIDRA_INSTALL_DIR:-/opt/ghidra}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-JAR=$(ls "$HERE"/ghidra-mcp/target/GhidraMCP-*.jar 2>/dev/null | grep -Ev "sources|javadoc|tests" | head -1)
+JAR=""
+for j in "$HERE"/ghidra-mcp/build/libs/GhidraMCP-*.jar "$HERE"/ghidra-mcp/target/GhidraMCP-*.jar; do
+  case "$j" in *sources*|*javadoc*|*tests*) continue;; esac
+  if [ -f "$j" ]; then JAR="$j"; break; fi
+done
 if [ -z "$JAR" ]; then
-  echo "НЕ найден GhidraMCP jar в $HERE/ghidra-mcp/target/ — сначала соберите:"
+  echo "НЕ найден GhidraMCP jar — сначала соберите расширение:"
   echo "  cd $HERE/ghidra-mcp && JAVA_HOME=\$HOME/.local/jdk21 \\"
-  echo "    GHIDRA_INSTALL_DIR=$GH ~/.local/maven/bin/mvn -P headless package -DskipTests"
+  echo "    ./gradlew buildExtension -PGHIDRA_INSTALL_DIR=$GH"
   exit 1
 fi
 
@@ -23,7 +27,7 @@ for jar in "$HERE"/ghidra-mcp/target/lib/*.jar "$HERE"/ghidra-mcp/lib/*.jar; do
 done
 
 echo "GhidraMCP headless → http://127.0.0.1:8089 (jar: $JAR)"
-exec "$JAVA_HOME/bin/java" -Xmx6g \
+exec "$JAVA_HOME/bin/java" -Xmx3g \
   -Dghidra.home="$GH" -Dapplication.name=GhidraMCP \
   -classpath "$CP" \
   com.xebyte.headless.GhidraMCPHeadlessServer --bind 127.0.0.1 --port 8089 "$@"

@@ -11,3 +11,9 @@ jdk21/
 *.gpr
 target/
 build/
+ghidra-projects/
+manhunt-toolkit/
+MHP/
+__pycache__/
+*.pyc
+rwsrc/
