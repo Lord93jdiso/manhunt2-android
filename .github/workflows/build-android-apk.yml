@@ -1,0 +1,66 @@
+name: build-android-apk
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-android-apk.yml"
+      - "android/**"
+
+jobs:
+  apk-arm64:
+    name: APK bring-up (arm64-v8a, SDL3+GLES3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Определить NDK
+        run: |
+          NDK_DIR="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          if [ -z "$NDK_DIR" ] || [ ! -d "$NDK_DIR" ]; then
+            NDK_DIR=$(ls -d /usr/local/lib/android/sdk/ndk/* 2>/dev/null | sort -V | tail -1)
+          fi
+          test -n "$NDK_DIR" && test -d "$NDK_DIR"
+          echo "NDK_DIR=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "NDK: $NDK_DIR"
+
+      - name: Клон и сборка SDL3 (Android arm64)
+        run: |
+          git clone --depth 1 --branch release-3.2.x https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/SDL" \
+            || git clone --depth 1 https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/SDL"
+          cmake -S "$RUNNER_TEMP/SDL" -B "$RUNNER_TEMP/sdl-build" \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl3" \
+            -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF
+          cmake --build "$RUNNER_TEMP/sdl-build" -j"$(nproc)"
+          cmake --install "$RUNNER_TEMP/sdl-build"
+
+      - name: Собрать проект приложения (шаблон SDL3 + overlay)
+        run: |
+          cp -r "$RUNNER_TEMP/SDL/android-project" build-app
+          rm -f build-app/app/jni/src/YourSourceHere.c
+          cp -r android/overlay/. build-app/
+          mkdir -p build-app/app/libs/arm64-v8a
+          cp "$RUNNER_TEMP/sdl3/lib/libSDL3.so" build-app/app/libs/arm64-v8a/
+          echo "--- нативные файлы проекта:"
+          find build-app/app/jni build-app/app/libs -type f | sort
+
+      - name: Сборка APK (gradle assembleDebug)
+        env:
+          SDL3_DIR: ${{ runner.temp }}/sdl3/lib/cmake/SDL3
+        run: |
+          cd build-app
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Артефакт APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: mh2-port-debug-apk
+          path: build-app/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
