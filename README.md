@@ -57,6 +57,9 @@ manhunt2-port/
   Шаги: SDL3 из исходников под NDK → патч librw (`tools/ci_patch_librw_android.py`: GLESv3/EGL вместо десктопного GL) →
   CMake+NDK (`LIBRW_PLATFORM=GL3`, `LIBRW_GL3_GFXLIB=SDL3`) → артефакты `dist/` (`librw.a`, `libSDL3.so`).
 - Запуск: `gh workflow run build-librw-android` или push, затрагивающий workflow/патч.
+- **Статус: ✅ зелёный** (2026-10-16, прогон №2, ~1м16с). Артефакт `librw-android-arm64`:
+  `librw.a` (62 объекта, static arm64) + `libSDL3.so` (aarch64, Android 24, NDK r30).
+  Скачать: `gh run download -n librw-android-arm64`.
 
 ## Форматы данных (разведка 2026-10-15)
 | Расширение | Сигнатура | Что это |
@@ -87,7 +90,7 @@ manhunt2-port/
 5. Renderer: GLES3 bring-up → Vulkan (`rw_vulkan` или ANGLE-over-Vulkan); шейдеры `.fxo` → GLSL/SPIR-V.
 
 ## Хроника
-- **2026-10-16** — восстановление после рестарта: анализ `Manhunt2.exe` перезапущен (импорт дал `reused_existing` → сработал форс-`reanalyze`; идёт в фоне, nice 10; уже 12.5к+ функций и растёт). Решения дня: рендер → **Vulkan**; сборки → **GitHub Actions (облако)**. Создан private-репозиторий https://github.com/Lord93jdiso/manhunt2-android + CI `build-librw-android` (librw+SDL3, arm64): прогон 1 — SDL3 собран, librw упал на поиске SDL3 (NDK re-rooting) → фикс `CMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH` + `SDL3_DIR`; прогон 2 — запущен. Находки из строк exe: сборочный путь `W:\Manhunt2_PC\Code\src\...`, DXUT-каркас, `neo::`-фронтенд → `docs/strings_notes.md` + `docs/rtti_classes.txt` (328 имён). `.glg` подтверждён как Z2HM-бандл уровня.
+- **2026-10-16** — восстановление после рестарта: анализ `Manhunt2.exe` перезапущен (импорт дал `reused_existing` → сработал форс-`reanalyze`; идёт в фоне, nice 10; уже 12.5к+ функций и растёт). Решения дня: рендер → **Vulkan**; сборки → **GitHub Actions (облако)**. Создан private-репозиторий https://github.com/Lord93jdiso/manhunt2-android + CI `build-librw-android` (librw+SDL3, arm64): прогон 1 — SDL3 собран, librw упал на поиске SDL3 (NDK re-rooting) → фикс `CMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH` + `SDL3_DIR`; прогон 2 — ✅ зелёный (~1м16с; артефакты `librw.a` + `libSDL3.so`, arm64, Android 24). Находки из строк exe: сборочный путь `W:\Manhunt2_PC\Code\src\...`, DXUT-каркас, `neo::`-фронтенд → `docs/strings_notes.md` + `docs/rtti_classes.txt` (328 имён). `.glg` подтверждён как Z2HM-бандл уровня.
 - **2026-10-15** — разведка и инструменты: PC-база выбрана; поднят GhidraMCP headless-сервер (:8089, UDS-сокет) + расширение под Ghidra 12.1.2 DEV; создан постоянный проект `ghidra-projects/mh2`; запущен импорт `Manhunt2.exe` с полным автоанализом.
   Находки: контейнеры данных `Z2HM`+zlib (внутри PMLC/TCDT/DLRW/ANCT/MHLS); 328 RTTI-имён C++ классов (`cAI_*`, `aAI_*`, `CGraphPath`, …); COFF-символов нет; импорты: d3dx9_35, fmodex/fmod_event, binkw32, DINPUT8.
 
