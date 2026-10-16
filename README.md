@@ -1,7 +1,7 @@
 # Manhunt 2 → ARM64/Android — рабочий каталог проекта
 
 **Обновлено:** 2026-10-16
-**Статус:** Этап 1 — анализ `Manhunt2.exe` в Ghidra (идёт) + облачный CI (librw+SDL3 под Android — отладка сборки)
+**Статус:** Этап 2 — анализ `Manhunt2.exe` завершён (15 635 функций, 49 293 символа); идут декомпиляция и сборка APK-скелета (CI)
 
 ## Цель
 Нативный порт Manhunt 2 на ARM64 (Android). Референс методологии: LibertyRecomp /
@@ -90,6 +90,7 @@ manhunt2-port/
 5. Renderer: GLES3 bring-up → Vulkan (`rw_vulkan` или ANGLE-over-Vulkan); шейдеры `.fxo` → GLSL/SPIR-V.
 
 ## Хроника
+- **2026-10-16 (позже)** — 🎉 Ghidra: полный авто-анализ `Manhunt2.exe` завершён: **15 635 функций, 49 293 символа** (~18 минут; RTTI/CFG/константные анализаторы отработали). APK-скелет: первый прогон упал на `find_package(SDL3)` → фикс (`MODE_PACKAGE=BOTH` + `SDL3_DIR` в cmake-аргументы gradle) → перезапуск.
 - **2026-10-16** — восстановление после рестарта: анализ `Manhunt2.exe` перезапущен (импорт дал `reused_existing` → сработал форс-`reanalyze`; идёт в фоне, nice 10; уже 12.5к+ функций и растёт). Решения дня: рендер → **Vulkan**; сборки → **GitHub Actions (облако)**. Создан private-репозиторий https://github.com/Lord93jdiso/manhunt2-android + CI `build-librw-android` (librw+SDL3, arm64): прогон 1 — SDL3 собран, librw упал на поиске SDL3 (NDK re-rooting) → фикс `CMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH` + `SDL3_DIR`; прогон 2 — ✅ зелёный (~1м16с; артефакты `librw.a` + `libSDL3.so`, arm64, Android 24). Находки из строк exe: сборочный путь `W:\Manhunt2_PC\Code\src\...`, DXUT-каркас, `neo::`-фронтенд → `docs/strings_notes.md` + `docs/rtti_classes.txt` (328 имён). `.glg` подтверждён как Z2HM-бандл уровня.
 - **2026-10-15** — разведка и инструменты: PC-база выбрана; поднят GhidraMCP headless-сервер (:8089, UDS-сокет) + расширение под Ghidra 12.1.2 DEV; создан постоянный проект `ghidra-projects/mh2`; запущен импорт `Manhunt2.exe` с полным автоанализом.
   Находки: контейнеры данных `Z2HM`+zlib (внутри PMLC/TCDT/DLRW/ANCT/MHLS); 328 RTTI-имён C++ классов (`cAI_*`, `aAI_*`, `CGraphPath`, …); COFF-символов нет; импорты: d3dx9_35, fmodex/fmod_event, binkw32, DINPUT8.
