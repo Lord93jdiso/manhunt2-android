@@ -50,11 +50,40 @@ jobs:
           echo "--- нативные файлы проекта:"
           find build-app/app/jni build-app/app/libs -type f | sort
 
+      - name: Клон librw + Android-патч
+        run: |
+          git clone --depth 1 https://github.com/aap/librw.git "$RUNNER_TEMP/librw"
+          python3 tools/ci_patch_librw_android.py "$RUNNER_TEMP/librw"
+          echo "LIBRW_ROOT=$RUNNER_TEMP/librw" >> "$GITHUB_ENV"
+
+      - name: Сборка librw (GL3=GLES3, SDL3)
+        run: |
+          cmake -S "$RUNNER_TEMP/librw" -B "$RUNNER_TEMP/librw-build" \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/sdl3" \
+            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
+            -DSDL3_DIR="$RUNNER_TEMP/sdl3/lib/cmake/SDL3" \
+            -DLIBRW_PLATFORM=GL3 \
+            -DLIBRW_GL3_GFXLIB=SDL3 \
+            -DLIBRW_TOOLS=OFF \
+            -DLIBRW_INSTALL=OFF \
+            -DLIBRW_EXAMPLES=OFF
+          cmake --build "$RUNNER_TEMP/librw-build" -j"$(nproc)"
+          LIBRW_LIB=$(ls "$RUNNER_TEMP/librw-build/src/"*.a | head -1)
+          test -n "$LIBRW_LIB" || { echo "librw.a не найден"; exit 1; }
+          echo "LIBRW_LIB=$LIBRW_LIB" >> "$GITHUB_ENV"
+          ls -la "$LIBRW_LIB"
+
       - name: Сборка APK (gradle assembleDebug)
         env:
           SDL3_DIR: ${{ runner.temp }}/sdl3/lib/cmake/SDL3
         run: |
           echo "SDL3_DIR=$SDL3_DIR"
+          echo "LIBRW_ROOT=$LIBRW_ROOT"
+          echo "LIBRW_LIB=$LIBRW_LIB"
           ls -la "$SDL3_DIR" || true
           cd build-app
           chmod +x gradlew

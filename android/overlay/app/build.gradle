@@ -23,6 +23,15 @@ android {
                 if (sdl3Dir != null && !sdl3Dir.isEmpty()) {
                     cmakeArgs += "-DSDL3_DIR=${sdl3Dir}"
                 }
+                // librw (статика из CI): каталог клона (там rw.h) и путь к librw.a
+                def librwRoot = System.getenv('LIBRW_ROOT')
+                if (librwRoot != null && !librwRoot.isEmpty()) {
+                    cmakeArgs += "-DLIBRW_ROOT=${librwRoot}"
+                }
+                def librwLib = System.getenv('LIBRW_LIB')
+                if (librwLib != null && !librwLib.isEmpty()) {
+                    cmakeArgs += "-DLIBRW_LIB=${librwLib}"
+                }
                 arguments = cmakeArgs
                 abiFilters 'arm64-v8a'
             }
