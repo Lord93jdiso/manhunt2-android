@@ -31,6 +31,11 @@
 | 0x00409a90 | `FUN_00409a90` (322 б) | после создания окна; `GetClientRect`, `FUN_00435f90` |
 | 0x00409130 | `FUN_00409130` (753 б) | после создания окна; `FUN_00616f0c`, `FUN_0048d1d0` |
 
+## Главный цикл (найден 2026-10-16)
+- `FUN_0042b096` — «Run»: настраивает указатель на `PeekMessageW` (через IAT 0x638258) + таблицу акселераторов (HACCEL) → вызывает `FUN_0040e529`. Зовётся из `FUN_0040e3a0`.
+- `FUN_0040e529` — **message loop**: `PeekMessageW(&msg,0,0,0,PM_REMOVE)` (до 32 сообщений/проход) → `TranslateMessage`/`DispatchMessageW`; при `WM_QUIT (0x12)` — `DestroyAcceleratorTable` + выход. **Каждый проход → `FUN_0040d8d0()` — ядро кадра (update+render).**
+- `FUN_0040d8d0` — **ядро кадра** [декомпиляция в работе].
+
 ## SecuROM (`.secu`, RWX, 0x007a5000–0x007d8fff)
 - `thunk_FUN_007a****` — обёртки защиты. Замечены: `0x7a6b80`, `0x7a6bf0` (→ HWND главного окна),
   `0x7a6250` (callback создания окна), `0x7a70d0` (вызов из WinMain), `0x7a5fe0`, `0x7a8de0`, `0x7a6900`,
