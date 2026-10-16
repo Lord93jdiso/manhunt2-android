@@ -45,6 +45,11 @@ jobs:
           git clone --depth 1 https://github.com/aap/librw.git "$RUNNER_TEMP/librw"
           python3 tools/ci_patch_librw_android.py "$RUNNER_TEMP/librw"
 
+      - name: Проверка SDL3 (диагностика)
+        run: |
+          ls -la "$RUNNER_TEMP/sdl3/lib/cmake/SDL3" || true
+          ls -la "$RUNNER_TEMP/sdl3/lib" || true
+
       - name: Сборка librw (CMake + NDK, GL3=GLES3, SDL3)
         run: |
           cmake -S "$RUNNER_TEMP/librw" -B build-librw \
@@ -53,6 +58,8 @@ jobs:
             -DANDROID_PLATFORM=android-24 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/sdl3" \
+            -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
+            -DSDL3_DIR="$RUNNER_TEMP/sdl3/lib/cmake/SDL3" \
             -DLIBRW_PLATFORM=GL3 \
             -DLIBRW_GL3_GFXLIB=SDL3 \
             -DLIBRW_TOOLS=OFF \
