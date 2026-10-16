@@ -1,0 +1,1 @@
+{"program":"Manhunt2.exe","entry_points":[{"name":"entry","address":"0061c2a1","symbol_type":"Function","kind":"external_entry","param_count":0},{"name":"start","address":"0000000c","symbol_type":"Function","kind":"common_entry_name","param_count":0},{"name":"IMAGE_DOS_HEADER_00400000","address":"00400000","symbol_type":"Label","kind":"program_entry"}],"count":3}

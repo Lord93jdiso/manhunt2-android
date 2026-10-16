@@ -17,3 +17,4 @@ MHP/
 __pycache__/
 *.pyc
 rwsrc/
+dist/
