@@ -189,6 +189,9 @@ static Texture *texFromTCDT(const std::vector<uint8> &data, const char *label)
 static float g_quad[MAXQUADS * 12];	// 4 вершины × xyz на квад
 static int g_nquad;
 
+static float g_bmin[3] = { 1e9f, 1e9f, 1e9f };
+static float g_bmax[3] = { -1e9f, -1e9f, -1e9f };
+
 static void scanBSPquads(const uint8 *d, size_t len)
 {
 	g_nquad = 0;
@@ -199,10 +202,21 @@ static void scanBSPquads(const uint8 *d, size_t len)
 			float v = f[k];
 			if (!(v == v) || fabs(v) > 5000.0f) { ok = false; break; }
 		}
-		if (ok)
+		if (ok) {
 			memcpy(g_quad + g_nquad++ * 12, f, 48);
+			for (int v = 0; v < 4; v++) {
+				float X = f[v * 3 + 0], Y = f[v * 3 + 1], Z = f[v * 3 + 2];
+				if (X < g_bmin[0]) g_bmin[0] = X;
+				if (Y < g_bmin[1]) g_bmin[1] = Y;
+				if (Z < g_bmin[2]) g_bmin[2] = Z;
+				if (X > g_bmax[0]) g_bmax[0] = X;
+				if (Y > g_bmax[1]) g_bmax[1] = Y;
+				if (Z > g_bmax[2]) g_bmax[2] = Z;
+			}
+		}
 	}
-	SDL_Log("BSP: собрано квадов %d (по 48б от 0x88)", g_nquad);
+	SDL_Log("BSP: квадов %d; bbox=(%.0f,%.0f,%.0f)..(%.0f,%.0f,%.0f)",
+	        g_nquad, g_bmin[0], g_bmin[1], g_bmin[2], g_bmax[0], g_bmax[1], g_bmax[2]);
 }
 
 // Раскладка Im3DVertex из rwgl3.h — локальная копия байт-в-байт
@@ -331,8 +345,12 @@ int main(int argc, char *argv[])
 		SDL_Log("фолбэк: BSP нет — цветовое демо");
 
 	// --- стартная камера: центр уровня, вид вбок ---
-	V3d campos = makeV3d(-20.0f, 6.0f, 25.0f);
-	V3d camdir = makeV3d(-0.7f, -0.15f, 0.7f);
+	float cx = 0.5f * (g_bmin[0] + g_bmax[0]);
+	float cy = 0.5f * (g_bmin[1] + g_bmax[1]);
+	float cz = 0.5f * (g_bmin[2] + g_bmax[2]);
+	float spanX = g_bmax[0] - g_bmin[0];
+	float spanZ = g_bmax[2] - g_bmin[2];
+	float orbit = spanX > spanZ ? spanX * 0.75f : spanZ * 0.75f;
 
 	bool running = true;
 	Uint64 t0 = SDL_GetTicks();
@@ -346,10 +364,12 @@ int main(int argc, char *argv[])
 		}
 
 		if (haveBSP) {
-			// медленное панорамирование камеры
+			// облёт: орбита вокруг центра уровня
 			float t = (float)(SDL_GetTicks() - t0) * 0.001f;
-			float yaw = 0.35f * sinf(t * 0.25f);
-			camdir = makeV3d(-0.99f * cosf(yaw), -0.15f, 0.99f * sinf(yaw));
+			float yaw = t * 0.2f;
+			float high = 45.0f + orbit * 0.1f;
+			V3d campos = makeV3d(cx + orbit * cosf(yaw), high, cz + orbit * sinf(yaw));
+			V3d camdir = normalize(makeV3d(cx - campos.x, cy + 2.0f - campos.y, cz - campos.z));
 
 			Matrix m;
 			m.setIdentity();
