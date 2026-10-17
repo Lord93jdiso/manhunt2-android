@@ -90,10 +90,10 @@ int main(int argc, char *argv[])
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_EVENT_QUIT ||
-                e.type == SDL_EVENT_KEY_DOWN ||
-                e.type == SDL_EVENT_FINGER_DOWN) {
+            if (e.type == SDL_EVENT_QUIT) {
                 running = false;
+            } else if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_KEY_DOWN) {
+                SDL_Log("ввод получен — демо продолжает работать");
             }
         }
 
