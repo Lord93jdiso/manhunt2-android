@@ -230,6 +230,7 @@ int main(int argc, char *argv[])
 			if (!blobs.empty()) {
 				const Dds &b = blobs[pick];
 				Image *img = Image::create(b.w, b.h, 32);
+				img->allocate();	// без этого pixels = nil → crash в decompressDXT1
 				img->setPixelsDXT(b.dxt, data.data() + b.off + 128);
 				Raster *ras = Raster::createFromImage(img);
 				img->destroy();
