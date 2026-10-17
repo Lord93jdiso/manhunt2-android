@@ -1,32 +1,44 @@
-// Manhunt 2 → Android: bring-up №3 — первая текстура игры (TCDT → DDS → DXT1).
+// Manhunt 2 → Android: bring-up №4 — настоящая геометрия уровня (A01) с текстурой сцены.
 //
-// Что проверяем: в APK зашит .tex-блок игры (gzip), приложение читает,
-// находит DDS-блоки, DXT распаковывает сам librw (Image::setPixelsDXT),
-// текстура уходит в GLES через Texture::create(Raster::createFromImage).
-// Рисуем Im2D-квад с этой текстурой. Тап — не выход (только в лог).
+// Что нового по сравнению с v3 (лицо Лео):
+//  1. В APK зашиты два новых ассета (уже развёрнутые Z2HM+zlib → gz):
+//     mh2scene.bin.gz   — scene1_pc.bsp  (DLRW/WORLD: геометрия уровня A01)
+//     mh2scenetex.bin.gz— scene1_pc.tex  (TCDT: текстуры сцены, DDS/DXT)
+//  2. BSP-эвристика: сбор 48-байтовых квад-блоков f32 (4 вершины/квад).
+//  3. Рендер im3d (НАСТОЯЩИЙ 3D): перспектива, камера летает по уровню.
+//  4. Текстура сцены из TCDT через тот же путь, что v3.
 //
-// Если разбор/декодирование сорвался — остаёмся в цветовом демо bring-up №2.
-//
-// Телефон/эмуляция: SDL3 surface → librw gl3 (GLES3) → showRaster.
+// Форматы-доказательства: docs/ghidra/map.md Приложение Б.
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <rw.h>
 #include <zlib.h>
 #include <vector>
 #include <string>
+#include <math.h>
 
 using namespace rw;
 
-#define TEX_ASSET "mh2tex.bin"
+#define TEX_ASSET     "mh2tex.bin"		/* лицо Лео, фитбэк */
+#define SCENE_ASSET   "mh2scene.bin"	/* DLRW/BSP         */
+#define SCENE_TEX     "mh2scenetex.bin"	/* TCDT сцены       */
 
-// Чтение ассета с развёрткой: AGP разжимает .gz-ассеты и переименовывает
-// (.bin.gz -> .bin), поэтому пробуем оба имени и sniff по магии
-// (1f 8b = gzip, "TCDT" = уже готовый контейнер).
-static std::vector<uint8> loadTexAsset(const char *name)
+static uint32 rd32(const uint8 *b)
+{
+	return (uint32)b[0] | ((uint32)b[1] << 8) | ((uint32)b[2] << 16) | ((uint32)b[3] << 24);
+}
+
+// --- чтение ассета APK: gzip/TCDT по магии, оба имени (.bin/.bin.gz) ---
+
+static std::vector<uint8> loadAssetBin(const char *name)
 {
 	const char *names[2];
 	names[0] = name;
-	names[1] = strcmp(name, "mh2tex.bin") == 0 ? "mh2tex.bin.gz" : "mh2tex.bin";
+	names[1] = strcmp(name, "mh2tex.bin") == 0
+	    ? "mh2tex.bin.gz"
+	    : strcmp(name, "mh2scene.bin") == 0 ? "mh2scene.bin.gz"
+	    : strcmp(name, "mh2scenetex.bin") == 0 ? "mh2scenetex.bin.gz"
+	    : "unknown.asset";
 
 	uint8 buf[65536];
 	for (int ni = 0; ni < 2; ni++) {
@@ -44,13 +56,12 @@ static std::vector<uint8> loadTexAsset(const char *name)
 			delete[] raw;
 			continue;
 		}
-		SDL_Log("%s: прочитано %zu байт, магия %02x%02x%02x%02x",
+		SDL_Log("%s: %zu байт, магия %02x%02x%02x%02x",
 		        names[ni], sz, raw[0], raw[1], sz > 2 ? raw[2] : 0, sz > 3 ? raw[3] : 0);
 
-		// gzip?
-		if (sz >= 2 && raw[0] == 0x1f && raw[1] == 0x8b) {
+		if (sz >= 2 && raw[0] == 0x1f && raw[1] == 0x8b) {	// gzip
 			z_stream z = {};
-			if (inflateInit2(&z, 47) != Z_OK) {	// 47 = gzip на входе
+			if (inflateInit2(&z, 47) != Z_OK) {
 				delete[] raw;
 				continue;
 			}
@@ -77,24 +88,15 @@ static std::vector<uint8> loadTexAsset(const char *name)
 			delete[] raw;
 			return out;
 		}
-		// уже готовый TCDT?
-		if (sz >= 4 && memcmp(raw, "TCDT", 4) == 0) {
-			std::vector<uint8> out(raw, raw + sz);
-			delete[] raw;
-			return out;
-		}
-		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s: неизвестная магия", names[ni]);
+		// уже развёрнутое (AGP сам раскрывает .gz и переименовывает) — годится как есть
+		std::vector<uint8> out(raw, raw + sz);
 		delete[] raw;
+		return out;
 	}
 	return std::vector<uint8>();
 }
 
-static uint32 rd32(const uint8 *b)
-{
-	return (uint32)b[0] | ((uint32)b[1] << 8) | ((uint32)b[2] << 16) | ((uint32)b[3] << 24);
-}
-
-// --- DDS-блоки внутри TCDT-контейнера ---
+// --- сканер DDS-блоков внутри TCDT ---
 
 struct Dds
 {
@@ -136,31 +138,126 @@ static void scanDDS(const uint8 *d, size_t len, std::vector<Dds> &out)
 	}
 }
 
-// --- Im2D-квад ---
-// Раскладка Im2DVertex из librw/gl3 (rwgl3.h) повторена локально:
-// gl3immed читаетвершины по offset'ам (POS 0, COLOR 16, UV 20), поэтому
-// структура должна быть байт-в-байт такой же.
-struct Im2DVert
+static Texture *texFromTCDT(const std::vector<uint8> &data, const char *label)
 {
-	float x, y, z, w;
+	if (data.size() < 0x40 || memcmp(data.data(), "TCDT", 4) != 0) {
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s: TCDT не опознан", label);
+		return nil;
+	}
+	std::vector<Dds> blobs;
+	scanDDS(data.data(), data.size(), blobs);
+	SDL_Log("%s: DDS-блоков %d", label, (int)blobs.size());
+	for (size_t i = 0; i < blobs.size() && i < 16; i++)
+		SDL_Log("  [%zu] @0x%x %dx%d mips=%d DXT%d", i, blobs[i].off,
+		        blobs[i].w, blobs[i].h, blobs[i].mips, blobs[i].dxt);
+
+	// берём самый крупный блоб ≥128px (крупные текстуры стен/объектов)
+	int pick = -1;
+	int bestArea = 0;
+	for (size_t i = 0; i < blobs.size(); i++) {
+		if (blobs[i].w < 128 || blobs[i].h < 128)
+			continue;
+		int area = blobs[i].w * blobs[i].h;
+		if (area > bestArea) { bestArea = area; pick = (int)i; }
+	}
+	if (pick < 0) {
+		SDL_Log("%s: нет блобов ≥128px", label);
+		return nil;
+	}
+	const Dds &b = blobs[pick];
+	Texture *tex = nil;
+	{
+		Image *img = Image::create(b.w, b.h, 32);
+		img->allocate();
+		img->setPixelsDXT(b.dxt, data.data() + b.off + 128);
+		Raster *ras = Raster::createFromImage(img);
+		img->destroy();
+		if (!ras)
+			return nil;
+		tex = Texture::create(ras);
+		// REPEAT x REPEAT, LINEAR (мировые UV могут выходить за 0..1)
+		tex->filterAddressing = (1 << 8) | (1 << 12) | 2;
+		SDL_Log("%s: текстура [%d]: %dx%d DXT%d", label, pick, b.w, b.h, b.dxt);
+	}
+	return tex;
+}
+
+// --- BSP (DLRW): эвристический сбор квад-блоков f32 ---
+
+#define MAXQUADS 1600
+static float g_quad[MAXQUADS * 12];	// 4 вершины × xyz на квад
+static int g_nquad;
+
+static void scanBSPquads(const uint8 *d, size_t len)
+{
+	g_nquad = 0;
+	for (size_t o = 0x88; o + 48 <= len && g_nquad < MAXQUADS; o += 48) {
+		const float *f = (const float *)(d + o);
+		bool ok = true;
+		for (int k = 0; k < 12; k++) {
+			float v = f[k];
+			if (!(v == v) || fabs(v) > 5000.0f) { ok = false; break; }
+		}
+		if (ok)
+			memcpy(g_quad + g_nquad++ * 12, f, 48);
+	}
+	SDL_Log("BSP: собрано квадов %d (по 48б от 0x88)", g_nquad);
+}
+
+// Раскладка Im3DVertex из rwgl3.h — локальная копия байт-в-байт
+// (gl3immed: POS@0, NORMAL@12, COLOR@24, UV@28)
+struct Im3DVert
+{
+	float x, y, z;
+	float nx, ny, nz;
 	uint8 r, g, b, a;
 	float u, v;
 };
 
-static Im2DVert quad[4];
-static uint16 quadIdx[6] = { 0, 1, 2, 0, 2, 3 };
+static Im3DVert g_vert[MAXQUADS * 4];
+static uint16 g_idx[MAXQUADS * 6];
+static int g_nvert, g_nidx;
 
-static void fillQuad(int w, int h)
+static void buildGeoFromQuads(void)
 {
-	for (int i = 0; i < 4; i++) {
-		quad[i].r = 255; quad[i].g = 255; quad[i].b = 255; quad[i].a = 255;
-		quad[i].z = 0.0f;
-		quad[i].w = 1.0f;
+	g_nvert = 0; g_nidx = 0;
+	const float S = 1.0f / 16.0f;
+	for (int q = 0; q < g_nquad; q++) {
+		float *p = g_quad + q * 12;
+		// доминирующая ось — плоская UV-развёртка
+		float ux = p[3] - p[0], uy = p[4] - p[1], uz = p[5] - p[2];
+		float nrmx = 0, nrmy = 0, nrmz = 0;
+		{
+			float ax = p[3] - p[0], ay = p[4] - p[1], az = p[5] - p[2];
+			float bx = p[9] - p[0], by = p[10] - p[4] ? p[10] - p[1] : p[10] - p[1], bz = p[11] - p[2];
+			nrmx = ay * bz - az * by;
+			nrmy = az * bx - ax * bz;
+			nrmz = ax * by - ay * bx;
+		}
+		(void)ux; (void)uy; (void)uz;
+		int upAxis = 0;
+		if (fabs(nrmy) >= fabs(nrmx) && fabs(nrmy) >= fabs(nrmz)) upAxis = 1;
+		else if (fabs(nrmx) >= fabs(nrmz)) upAxis = 0;
+		else upAxis = 2;
+		for (int v = 0; v < 4; v++) {
+			Im3DVert &d = g_vert[g_nvert + v];
+			float X = p[v * 3 + 0], Y = p[v * 3 + 1], Z = p[v * 3 + 2];
+			d.x = X; d.y = Y; d.z = Z;
+			d.nx = nrmx; d.ny = nrmy; d.nz = nrmz;
+			float len = sqrtf(nrmx * nrmx + nrmy * nrmy + nrmz * nrmz);
+			if (len > 1e-9f) { d.nx /= len; d.ny /= len; d.nz /= len; }
+			d.r = 255; d.g = 255; d.b = 255; d.a = 255;
+			if (upAxis == 1) { d.u = X * S; d.v = Z * S; }
+			else if (upAxis == 0) { d.u = Z * S; d.v = Y * S; }
+			else { d.u = X * S; d.v = Y * S; }
+		}
+		uint16 base = g_nvert;
+		uint16 *ii = g_idx + g_nidx;
+		ii[0] = base + 0; ii[1] = base + 1; ii[2] = base + 2;
+		ii[3] = base + 0; ii[4] = base + 2; ii[5] = base + 3;
+		g_nvert += 4; g_nidx += 6;
 	}
-	quad[0].x = 0; quad[0].y = 0; quad[0].u = 0; quad[0].v = 0;
-	quad[1].x = w; quad[1].y = 0; quad[1].u = 1; quad[1].v = 0;
-	quad[2].x = w; quad[2].y = h; quad[2].u = 1; quad[2].v = 1;
-	quad[3].x = 0; quad[3].y = h; quad[3].u = 0; quad[3].v = 1;
+	SDL_Log("геометрия: вершин %d, индексов %d", g_nvert, g_nidx);
 }
 
 int main(int argc, char *argv[])
@@ -172,20 +269,19 @@ int main(int argc, char *argv[])
 		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL_Init: %s", SDL_GetError());
 		return 1;
 	}
-
 	if (!Engine::init()) {
 		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "rw::Engine::init — не удалось");
 		SDL_Quit();
 		return 1;
 	}
 
-	SDL_Window *window = nullptr;
+	SDL_Window *window = nil;
 	EngineOpenParams params = {};
 	params.window = &window;
 	params.fullscreen = true;
 	params.width = 1280;
 	params.height = 720;
-	params.windowtitle = "Manhunt 2 Port — TCDT bring-up";
+	params.windowtitle = "Manhunt 2 Port — BSP bring-up";
 
 	if (!Engine::open(&params)) {
 		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "rw::Engine::open — не удалось");
@@ -211,74 +307,79 @@ int main(int argc, char *argv[])
 	cam->setFrame(Frame::create());
 	cam->frameBuffer = Raster::create(w, h, 0, Raster::CAMERA);
 	cam->zBuffer = Raster::create(w, h, 0, Raster::ZBUFFER);
-	cam->setFarPlane(1000.0f);
-	SDL_Log("камера готова %dx%d", w, h);
+	cam->setProjection(Camera::PERSPECTIVE);
+	cam->setNearPlane(0.2f);
+	cam->setFarPlane(600.0f);
+	cam->setFOV(70.0f, (float)w / (float)h);
 
-	// --- текстура игры ---
-	Texture *tex = nil;
+	// --- ассеты игры ---
+	Texture *sceneTex = nil;
+	bool haveBSP = false;
 	{
-		std::vector<uint8> data = loadTexAsset(TEX_ASSET);
-		if (!data.empty()) {
-			SDL_Log("TCDT: magic=%.4s ver=%d размер=%zu", data.data(), (int)rd32(data.data() + 4), data.size());
-			std::vector<Dds> blobs;
-			scanDDS(data.data(), data.size(), blobs);
-			SDL_Log("DDS-блоков: %d", (int)blobs.size());
-			size_t pick = 0;
-			for (size_t i = 0; i < blobs.size(); i++)
-				SDL_Log("  [%zu] @0x%x %dx%d mips=%d DXT%d size=%zu",
-				        i, blobs[i].off, blobs[i].w, blobs[i].h, blobs[i].mips, blobs[i].dxt, blobs[i].size);
-			if (!blobs.empty()) {
-				const Dds &b = blobs[pick];
-				Image *img = Image::create(b.w, b.h, 32);
-				img->allocate();	// без этого pixels = nil → crash в decompressDXT1
-				img->setPixelsDXT(b.dxt, data.data() + b.off + 128);
-				Raster *ras = Raster::createFromImage(img);
-				img->destroy();
-				if (ras) {
-					tex = Texture::create(ras);
-					// CLAMP x CLAMP, LINEAR (VVVVUUUU FFFFFFFF)
-					tex->filterAddressing = (3 << 8) | (3 << 12) | 2;
-					SDL_Log("текстура готова: %dx%d DXT%d", b.w, b.h, b.dxt);
-				} else {
-					SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Raster::createFromImage — не удался");
-				}
-			}
+		std::vector<uint8> tcdt = loadAssetBin(SCENE_TEX);
+		if (!tcdt.empty())
+			sceneTex = texFromTCDT(tcdt, "scene");
+		std::vector<uint8> bsp = loadAssetBin(SCENE_ASSET);
+		if (bsp.size() > 0x88 + 48 && memcmp(bsp.data(), "DLRW", 4) == 0) {
+			scanBSPquads(bsp.data(), bsp.size());
+			buildGeoFromQuads();
+			haveBSP = g_nquad > 0;
 		}
-		if (!tex)
-			SDL_Log("фолбэк: цветовое демо (текстуры нет)");
 	}
-	fillQuad(w, h);
+	if (!haveBSP)
+		SDL_Log("фолбэк: BSP нет — цветовое демо");
 
-	// --- цикл ---
+	// --- стартная камера: центр уровня, вид вбок ---
+	V3d campos = makeV3d(-20.0f, 6.0f, 25.0f);
+	V3d camdir = makeV3d(-0.7f, -0.15f, 0.7f);
+
 	bool running = true;
 	Uint64 t0 = SDL_GetTicks();
 	while (running) {
 		SDL_Event e;
 		while (SDL_PollEvent(&e)) {
-			if (e.type == SDL_EVENT_QUIT) {
+			if (e.type == SDL_EVENT_QUIT)
 				running = false;
-			} else if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_KEY_DOWN) {
+			else if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_KEY_DOWN)
 				SDL_Log("ввод получен — демо продолжает работать");
-			}
 		}
 
-		if (tex) {
+		if (haveBSP) {
+			// медленное панорамирование камеры
+			float t = (float)(SDL_GetTicks() - t0) * 0.001f;
+			float yaw = 0.35f * sinf(t * 0.25f);
+			camdir = makeV3d(-0.99f * cosf(yaw), -0.15f, 0.99f * sinf(yaw));
+
+			Matrix m;
+			m.setIdentity();
+			m.pos = campos;
+			m.lookAt(camdir, makeV3d(0.0f, 1.0f, 0.0f));
+			cam->getFrame()->matrix = m;
+			cam->getFrame()->matrix.update();
+
 			RGBA col;
-			col.red = 0; col.green = 0; col.blue = 0; col.alpha = 255;
+			col.red = 8; col.green = 8; col.blue = 10; col.alpha = 255;
 			cam->beginUpdate();
 			cam->clear(&col, Camera::CLEARIMAGE | Camera::CLEARZ);
-			SetRenderState(ZTESTENABLE, 0);
-			SetRenderState(ZWRITEENABLE, 0);
 			SetRenderState(CULLMODE, CULLNONE);
-			SetRenderStatePtr(TEXTURERASTER, tex->raster);
-			im2d::RenderIndexedPrimitive(PRIMTYPETRILIST, quad, 4, quadIdx, 6);
+			SetRenderState(ZTESTENABLE, 1);
+			SetRenderState(ZWRITEENABLE, 1);
+			if (sceneTex)
+				SetRenderStatePtr(TEXTURERASTER, sceneTex->raster);
+			if (g_nvert) {
+				static Matrix ident;
+				ident.setIdentity();
+				im3d::Transform(g_vert, g_nvert, &ident, im3d::VERTEXUV | im3d::ALLOPAQUE);
+				im3d::RenderIndexedPrimitive(PRIMTYPETRILIST, g_idx, g_nidx);
+				im3d::End();
+			}
 			cam->endUpdate();
 			cam->showRaster(0);
 			SDL_Delay(16);
 			continue;
 		}
 
-		// фолбэк: старое цветовое демо
+		// фолбэк: цветовое демо bring-up №2
 		{
 			float t = (float)(SDL_GetTicks() - t0) * 0.001f;
 			RGBA col;
@@ -294,15 +395,14 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if (tex) {
-		tex->destroy();
-	}
+	if (sceneTex)
+		sceneTex->destroy();
 	cam->destroy();
 
 	Engine::stop();
 	Engine::close();
 	Engine::term();
 	SDL_Quit();
-	SDL_Log("выход, всё чисто (TCDT bring-up)");
+	SDL_Log("выход, всё чисто (BSP bring-up)");
 	return 0;
 }
