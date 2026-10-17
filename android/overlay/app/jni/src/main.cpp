@@ -110,8 +110,17 @@ static void scanDDS(const uint8 *d, size_t len, std::vector<Dds> &out)
 }
 
 // --- Im2D-квад ---
+// Раскладка Im2DVertex из librw/gl3 (rwgl3.h) повторена локально:
+// gl3immed читаетвершины по offset'ам (POS 0, COLOR 16, UV 20), поэтому
+// структура должна быть байт-в-байт такой же.
+struct Im2DVert
+{
+	float x, y, z, w;
+	uint8 r, g, b, a;
+	float u, v;
+};
 
-static Im2DVertex quad[4];
+static Im2DVert quad[4];
 static uint16 quadIdx[6] = { 0, 1, 2, 0, 2, 3 };
 
 static void fillQuad(int w, int h)
@@ -223,8 +232,8 @@ int main(int argc, char *argv[])
 			Camera *cam = engine->currentCamera;
 			cam->beginUpdate();
 			cam->clear(&col, Camera::CLEARIMAGE | Camera::CLEARZ);
-			SetRenderState(ZTESTENABLE, FALSE);
-			SetRenderState(ZWRITEENABLE, FALSE);
+			SetRenderState(ZTESTENABLE, 0);
+			SetRenderState(ZWRITEENABLE, 0);
 			SetRenderState(CULLMODE, CULLNONE);
 			SetRenderStatePtr(TEXTURERASTER, tex->raster);
 			im2d::RenderIndexedPrimitive(PRIMTYPETRILIST, quad, 4, quadIdx, 6);
