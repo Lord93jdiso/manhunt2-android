@@ -17,57 +17,84 @@
 
 using namespace rw;
 
-#define TEX_ASSET "mh2tex.bin.gz"
+#define TEX_ASSET "mh2tex.bin"
+
+// Чтение ассета с развёрткой: AGP разжимает .gz-ассеты и переименовывает
+// (.bin.gz -> .bin), поэтому пробуем оба имени и sniff по магии
+// (1f 8b = gzip, "TCDT" = уже готовый контейнер).
+static std::vector<uint8> loadTexAsset(const char *name)
+{
+	const char *names[2];
+	names[0] = name;
+	names[1] = strcmp(name, "mh2tex.bin") == 0 ? "mh2tex.bin.gz" : "mh2tex.bin";
+
+	uint8 buf[65536];
+	for (int ni = 0; ni < 2; ni++) {
+		SDL_IOStream *io = SDL_IOFromFile(names[ni], "rb");
+		if (!io) {
+			SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s: не читается (%s)", names[ni], SDL_GetError());
+			continue;
+		}
+		size_t sz = SDL_GetIOSize(io);
+		uint8 *raw = new uint8[sz];
+		bool ok = SDL_ReadIO(io, raw, sz) == sz;
+		SDL_CloseIO(io);
+		if (!ok) {
+			SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s: прочитано меньше %zu", names[ni], sz);
+			delete[] raw;
+			continue;
+		}
+		SDL_Log("%s: прочитано %zu байт, магия %02x%02x%02x%02x",
+		        names[ni], sz, raw[0], raw[1], sz > 2 ? raw[2] : 0, sz > 3 ? raw[3] : 0);
+
+		// gzip?
+		if (sz >= 2 && raw[0] == 0x1f && raw[1] == 0x8b) {
+			z_stream z = {};
+			if (inflateInit2(&z, 47) != Z_OK) {	// 47 = gzip на входе
+				delete[] raw;
+				continue;
+			}
+			std::vector<uint8> out;
+			out.reserve(sz * 2);
+			z.next_in = raw;
+			z.avail_in = (uInt)sz;
+			int ret = Z_OK;
+			while (ret == Z_OK || ret == Z_BUF_ERROR) {
+				z.next_out = buf;
+				z.avail_out = (uInt)sizeof(buf);
+				ret = inflate(&z, Z_NO_FLUSH);
+				size_t got = sizeof(buf) - z.avail_out;
+				if (got) out.insert(out.end(), buf, buf + got);
+				if (ret == Z_STREAM_END || z.avail_in == 0) break;
+			}
+			inflateEnd(&z);
+			if (ret != Z_STREAM_END) {
+				SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "inflate: ret=%d (%s)", ret, z.msg ? z.msg : "н/д");
+				delete[] raw;
+				continue;
+			}
+			SDL_Log("inflate: %zu -> %zu байт", sz, out.size());
+			delete[] raw;
+			return out;
+		}
+		// уже готовый TCDT?
+		if (sz >= 4 && memcmp(raw, "TCDT", 4) == 0) {
+			std::vector<uint8> out(raw, raw + sz);
+			delete[] raw;
+			return out;
+		}
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s: неизвестная магия", names[ni]);
+		delete[] raw;
+	}
+	return std::vector<uint8>();
+}
 
 static uint32 rd32(const uint8 *b)
 {
 	return (uint32)b[0] | ((uint32)b[1] << 8) | ((uint32)b[2] << 16) | ((uint32)b[3] << 24);
 }
 
-// --- gzip → память ---
-
-static std::vector<uint8> loadGzAsset(const char *name)
-{
-	SDL_IOStream *io = SDL_IOFromFile(name, "rb");
-	if (!io) {
-		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s: не читается (%s)", name, SDL_GetError());
-		return std::vector<uint8>();
-	}
-	size_t sz = SDL_GetIOSize(io);
-	std::vector<uint8> gz(sz);
-	if (SDL_ReadIO(io, gz.data(), sz) != sz) {
-		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "%s: прочитано меньше %zu", name, sz);
-		SDL_CloseIO(io);
-		return std::vector<uint8>();
-	}
-	SDL_CloseIO(io);
-
-	z_stream z = {};
-	if (inflateInit2(&z, 47) != Z_OK)	// 47 = gzip на входе
-		return std::vector<uint8>();
-	std::vector<uint8> out;
-	out.reserve(sz * 2);
-	uint8 buf[65536];
-	z.next_in = gz.data();
-	z.avail_in = (uInt)sz;
-	int ret = Z_OK;
-	while (ret == Z_OK || ret == Z_BUF_ERROR) {
-		z.next_out = buf;
-		z.avail_out = (uInt)sizeof(buf);
-		ret = inflate(&z, Z_NO_FLUSH);
-		size_t got = sizeof(buf) - z.avail_out;
-		if (got) out.insert(out.end(), buf, buf + got);
-		if (ret == Z_STREAM_END || z.avail_in == 0) break;
-	}
-	inflateEnd(&z);
-	if (ret != Z_STREAM_END)
-		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "inflate: ret=%d (%s)", ret, z.msg ? z.msg : "н/д");
-	else
-		SDL_Log("%s: gz=%zu → %zu байт", name, sz, out.size());
-	return out;
-}
-
-// --- ДС-блоки внутри TCDT-контейнера ---
+// --- DDS-блоки внутри TCDT-контейнера ---
 
 struct Dds
 {
@@ -190,7 +217,7 @@ int main(int argc, char *argv[])
 	// --- текстура игры ---
 	Texture *tex = nil;
 	{
-		std::vector<uint8> data = loadGzAsset(TEX_ASSET);
+		std::vector<uint8> data = loadTexAsset(TEX_ASSET);
 		if (!data.empty()) {
 			SDL_Log("TCDT: magic=%.4s ver=%d размер=%zu", data.data(), (int)rd32(data.data() + 4), data.size());
 			std::vector<Dds> blobs;
