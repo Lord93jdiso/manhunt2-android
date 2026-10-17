@@ -174,3 +174,27 @@ FUN_00607610 -> девайс: SetFVF(0x164)@0x0060761f, SetVertexDeclaration(0x1
 - FUN_00602ea0 - обход коллекции FUN_005b6e30 (единственный его caller) + матрицы FUN_0060d860 и др.; назначение не установлено.
 - FUN_005b9880 - таймер: если *(obj+0x1232c) в диапазоне (0, DAT_006ece6c) -> обнулить и FUN_005b9730().
 - FUN_0060bde0 - геттер объекта-держателя (используется FUN_005cf9b0: поля +0x30/+0x34/+0x38).
+
+## Приложение Б. Форматы данных MH2 (открыто 2026-10-17)
+
+### Контейнеры
+- `levels/*/resource1-3.glg` = **Z2HM + zlib** → ТЕКСТ. resource1 = PLAYER/DEFAULT_SETTINGS (туман, погода), resource2 = DIRECTOR (AI-логика директора), resource3 = БАЗА СУЩНОСТЕЙ УРОВНЯ (60 КБ текста):
+  `RECORD A01_BurntPile / CLASS EC_BASIC / MODEL A01_BurntPile / COLLISION_DATA ... / MATERIAL MATERIAL_STONE / HIT_POINTS / LOD_DATA ...`
+- `levels/*/modelspc.mdl` = **Z2HM+zlib → один валидный PMLC** (A01: 4 357 328 байт, ver=1).
+- `global/gmodelspc.mdl` (и глобальные *_pc.mdl типа Leo_Ingame-LCas_pc.mdl) = сырой PMLC (без zlib).
+- `.tex` = **TCDT** — словарь текстур: имя + параметры + **встроенные стандартные DDS** (DXT1/DXT3/DXT5). Sprад TCDT-хедер: magic,ver=1,filesize,*,*,count,2,0x40,0xC0...;Leo: 8 записей, 2 DDS по 0x140/0xAC80.
+
+### Доказано на телефоне (первый артефакт из игры на экране)
+Файл `global/Leo_Ingame-LCas_pc.tex` (gzip→APK asset `mh2tex.bin`) → парсинг DDS-блоков на устройстве →
+librw `Image::setPixelsDXT` → `Raster::createFromImage` → GLES3. На скриншоте — рендер Leo_newhead (лицо Лео).
+Тап больше НЕ выход (только система). `pidof` по имени пакета не работает на HONOR — ps -ef | grep по имени пакета.
+
+### Загрузчики в exe (точно найдено)
+- PMLC читает **FUN_005cc010**(stream,out): header = {0x434C4D50 'PMLC', ver=1}, дальше FUN_00401140 = «фиксап указателей» (ар-р: +0x10 массив ptr, +0x14 счёт; массив fnptr +0x18, u16 счётчики +0x1c/+0x1e) — PMLC = поток СЕРИАЛИЗОВАННЫХ C++-ОБЪЕКТОВ с релокациями и подменой vtable по реестру (DAT_0079fe38 / DAT_0079fd38, .bss).
+- В дереве PMLC обнаружены связные списки нод: stride 16 = {next ptr, размер блока 0x4B0, ptr данные, 0}, данные = вертексные блоки (A01: 0x129AE0, 0x12B610, 0x12DC40, 0x12FF40); имена объектов уровня стоят НАД этим (A01_BurntPile, _col, _L0).
+
+### Вершины/фомат: TODO на след. сессию
+- FVF-константы найти в цепочке FUN_005cfac0→FUN_00607610 (SetFVF через vtable-оффсеты; пара 0x190/0x1a0/0x15c/0x164).
+- `mat_pc.bin` (36 КБ): {0x45 E... records?} — словарь материалов уровня, соотносится с `TCDT`-именами.
+- `collisions_pc.col` — имена коллизий открыто (строки): RW-style col?
+- `mapai_pc.grf` = 'GNIA' (AI-навигация) — позже.
