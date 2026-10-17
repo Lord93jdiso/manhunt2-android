@@ -29,4 +29,5 @@ target_link_libraries(main
         GLESv3
         EGL
         log
+        z
 )
