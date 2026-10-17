@@ -104,6 +104,73 @@
 1. [решено] Главный цикл: `FUN_0042b096` → `FUN_0040e529` → `FUN_0040d8d0` → (`FUN_0040cfc0` / `FUN_0040d5c0`).
 2. [решено] D3D9 грузится динамически; инициализация — `FUN_00413ef0` (см. раздел D3D9).
 3. [решено] `FUN_004047xx` из WinMain — сеттеры полей App (`+0x378/+0x3c4`, `+0x37c/+0x3c8`); значения — `FUN_006151d0`, `LAB_00615260`.
-4. [решено] `FUN_00404010` — геттер устройства (`App+4`); vtable +0xc `TestCooperativeLevel`, +0x20 `GetDisplayMode` — это `IDirect3DDevice9`. `thunk_FUN_00435f90` (фронтенд) — уточнить.
-5. [в работе] Рендер-мир и поверхность девайса: эффекты `FUN_006081d0`, регион 0x60xxxx; потребители устройства `FUN_0060cb30/FUN_0060cbc0/FUN_0060be00` и др.
-6. [открыто] Сеттеры колбэков `App+0x360` (тик), `App+0x38c` (конец кадра), `App+0x3a4` (рендер).
+4. [решено] `FUN_00404010` — геттер устройства (`App+4`); vtable +0xc `TestCooperativeLevel`, +0x20 `GetDisplayMode` — это `IDirect3DDevice9`.
+5. [решено 2026-10-17] Полный путь от кадра до Draw* - см. Приложение A. Коротко: мастер-рендер кадра FUN_005c5c20 (case 4 из FUN_004b03c0) -> видовой шаг FUN_005c3390 -> FUN_005cf9b0(3) (состояние + регистрация) -> обход списка FUN_005cf960 -> callback 0x005cc320 -> FUN_005cfac0 -> FUN_00607610 (девайс: SetFVF/SetVertexDeclaration/SetIndices/SetStreamSource/DrawIndexedPrimitive). Второй draw-путь: FUN_005b6f80 (сборка) -> FUN_00607780.
+6. [решено 2026-10-17] Все сайты прямых вызовов Draw* принадлежат функции-носителю (таблица A.1). Поправка к старой заметке: draw-B (FUN_00607780) имеет SetFVF (сайт 0x0060778d) - прежняя запись "без SetFVF" ошибочна. Хит в FUN_005b6a40 - ложный (поле +0x54 чужого объекта).
+7. [в работе] Связка проходов мастера FUN_005c5c20 с эффектами FUN_006081d0 (техники Render*/RenderSkinned*) не подтверждена; зоны 0x608xxx-0x614xxx - UP/2D-пути (A.4).
+8. [открыто] Сеттеры колбэков App+0x360 (тик), App+0x38c (конец кадра), App+0x3a4 (рендер).
+
+## Приложение A: цепочка рендера и draw-носители (2026-10-17)
+
+Тела - в docs/ghidra/scan/fun_*.c; сайты - pe_hits2.json + owners.json; вызывающие - callers_draw.json.
+
+### A.1 Сайты прямых вызовов девайса (байтовый скан, окно 48 байт)
+
+| Слот IDirect3DDevice9 | Адрес сайта | Функция-носитель |
+|---|---|---|
+| DrawPrimitive | - | (нет сайтов) |
+| DrawIndexedPrimitive (0x148) | 0x00607736 | FUN_00607610 |
+| DrawIndexedPrimitive (0x148) | 0x006078d9 | FUN_00607780 |
+| DrawPrimitiveUP (0x14c) | 0x006088a0 | FUN_00608730 |
+| DrawPrimitiveUP (0x14c) | 0x00608bce | FUN_00608ad0 |
+| DrawPrimitiveUP (0x14c) | 0x0061474b | FUN_00614630 |
+| DrawIndexedPrimitiveUP (0x150) | 0x00484621 | FUN_00484420 |
+| DrawIndexedPrimitiveUP (0x150) | 0x005b6a64 | FUN_005b6a40 |
+| SetVertexDeclaration (0x15c) | 0x00607639 | FUN_00607610 |
+| SetVertexDeclaration (0x15c) | 0x006077b6 | FUN_00607780 |
+| SetFVF (0x164) | 0x0060761f | FUN_00607610 |
+| SetFVF (0x164) | 0x0060778d | FUN_00607780 |
+| SetFVF (0x164) | 0x0060887f | FUN_00608730 |
+| SetFVF (0x164) | 0x00608bad | FUN_00608ad0 |
+| SetFVF (0x164) | 0x0061473b | FUN_00614630 |
+| SetStreamSource (0x190) | 0x0060766e | FUN_00607610 |
+| SetStreamSource (0x190) | 0x006077eb | FUN_00607780 |
+| SetIndices (0x1a0) | 0x00607650 | FUN_00607610 |
+| SetIndices (0x1a0) | 0x006077cd | FUN_00607780 |
+
+Примечания: сайт 0x0061474b (FUN_00614630) - indirect CALL. Пул косвенных форм CreateVertexBuffer (CALL [reg+0x68], ~23 шт.) - отдельный слой, без проверки владельцев не использовать.
+
+### A.2 Мастер-рендер кадра FUN_005c5c20 (case 4; файл fun_005c5c20_state4.c)
+
+Порядок: FUN_005b8d00(); FUN_005b9380(); счётчик DAT_00697ed4++; ранний выход FUN_005c3700() при DAT_006d3834==1 и DAT_0077e640; далее FUN_005c3a70(), FUN_005c34c0(param_1), FUN_004ea600(), FUN_005bb160() (= FUN_005bad70 - сортировка draw-списков, 6032 симв. + FUN_005b9880 - таймер перезагрузки).
+Лестница подсистем по битам _DAT_006d384c: 0x1->FUN_005e3c10, 0x2->FUN_005cf270, 0x8->FUN_005c32c0 (после FUN_0060bfc0(0xc,1)), 0x20->FUN_004e1150 (заглушка), 0x80->FUN_005e1810, 0x100->FUN_005e4c80, 0x400->FUN_005c36d0, 0x800->FUN_005efcd0, 0x1000->FUN_005c3430, 0x2000->FUN_005f1f50, 0x4000->FUN_005fd190, 0x8000->FUN_005e7660, 0x10000->FUN_005f7060, 0x20000->FUN_005434e0, 0x40000->FUN_0050c360, 0x80000->FUN_005b7440, 0x100000->FUN_005fb6f0.
+Три вида: FUN_005c3800(1/2/3) -> thunk_FUN_00435616 + FUN_005c55b0 + FUN_005c3390(param_1) + FUN_005c3e80.
+Хвост: при DAT_006ec990 != 4 -> FUN_00605ef0(1); FUN_00545b30(param_1,1) - выход на рендер мира (FUN_00545270); FUN_005c3470; FUN_005c3a10; FUN_00522bd0(&DAT_007894c0); FUN_005e8b80. Else-ветка: FUN_005af790(); FUN_005c34b0(DAT_0075b6f0); FUN_00605ef0(0).
+
+### A.3 Цепочка draw-A (файлы: fun_005c3390.c, fun_005cf9b0.c, fun_005cf960.c, fun_005cfac0_meshdrawA_host.c, fun_00607610_mesh_draw_A.c)
+
+FUN_005c3390 (видовой шаг): при DAT_00789484 - FUN_00585a00(1) (если DAT_0078947c==0), FUN_005cc2e0, FUN_005cc2c0, состояния FUN_0060bfc0(10,5)/(0xb,6)/(0x20,DAT_0078954c), затем FUN_005cf9b0(3), затем FUN_0060bfc0(0x20,0) и повтор FUN_005cc2e0/FUN_005cc2c0.
+FUN_005cf9b0(3): FUN_0060bde0() -> holder;(holder+0x30/0x34/0x38 - три float) -> FUN_005cd060(...,2,0xff) -> FUN_005c2280; FUN_0060bfc0(0x1f,1); локальный буфер 64 байта = 0, последний = 1.0f (0x3f800000); FUN_0057e390(); thunk_FUN_0041d879(&buf,0); регистрация: FUN_005cf960(callback=&LAB_005cc320, ctx=3); объект-владелец списка передаётся через ECX (this-call), в декомпиле не виден - уточнить.
+FUN_005cf960 (обход): FUN_005cd360(); голова списка = *(this+0x40); для каждого узла: callback(узел, ctx); callback вернул 0 -> стоп (return 0); следующий = *(узел+4); пустой список -> 1.
+0x005cc320 (thunk): MOV EAX,[ESP+8]; MOV ECX,[ESP+4]; PUSH EAX; CALL FUN_005cfac0; MOV AL,1; RET.
+FUN_005cfac0 (25 байт): if (*(int*)(p1+0x48) != 0) FUN_00607610(p2+0x30, 0);
+FUN_00607610 -> девайс: SetFVF(0x164)@0x0060761f, SetVertexDeclaration(0x15c)@0x00607639, SetIndices(0x1a0)@0x00607650, SetStreamSource(0x190)@0x0060766e, DrawIndexedPrimitive(0x148)@0x00607736; карта вершинных форматов - FUN_00607220.
+
+### A.4 Прочие draw-носители
+
+- FUN_00607780 (draw-B): SetFVF@0x0060778d, SetVertexDeclaration@0x006077b6, SetIndices@0x006077cd, SetStreamSource@0x006077eb, DrawIndexedPrimitive@0x006078d9. Caller: FUN_005b6f80 (0x005b7114, 0x005b7172). FUN_005b6f80 - сборка: пул DAT_0077b680, скин-матрицы FUN_0057e4d0, сборка FUN_0056abd0 -> FUN_00607780. Вызовы FUN_005b6f80 - с адресов 0x005bb530 и 0x005bc987 (в Ghidra без функции-владельца; рядом PUSH 0xe; CALL FUN_0060d7d0).
+- Адаптер draw-B: thunk 0x005bb520 (PUSH ESI; MOV ESI,[ESP+8]; SETNZ AL; MOV ECX,ESI; PUSH EAX; CALL FUN_005b6f80); FUN_005bbd5a (326 б, data-ref на 0x005bb520; вызывает FUN_0060bfc0(0x1f) и FUN_005bbc40(callback 0x5bb520)); FUN_005bbc40 - обход списка this+0x14: callback(узел, arg) до нуля; единственный caller FUN_005bbd5a - thunk_FUN_005bbd5a (0x0041fbd6).
+- FUN_00608730: SetFVF@0x0060887f + DrawPrimitiveUP@0x006088a0; callers: FUN_00608990, FUN_0060af80, FUN_0060b1d0 (x2). FUN_0060af80 вызывается из FUN_00545270 12 раз.
+- FUN_00608ad0: SetFVF@0x00608bad + DrawPrimitiveUP@0x00608bce; 8 callers: FUN_005ef78d, FUN_005f1d40, FUN_005f1f50, FUN_005f7060, FUN_00608c10, FUN_00608ce0, FUN_00608db0, FUN_00609020.
+- FUN_00614630 (2D-квад): SetFVF@0x0061473b + DrawPrimitiveUP@0x0061474b; callers: FUN_00614c50 (x4), FUN_00614e80; FUN_00614c50 <- FUN_006150b0 (обёртка SetViewport).
+- FUN_00484420 (UI): DrawIndexedPrimitiveUP@0x00484621.
+- FUN_005b6a40: ложный хит; xref 0 (мёртв).
+
+### A.5 Побочные находки (не draw)
+
+- FUN_005cfb90 - AABB-обход дерева: узлы ushort* по param_1+0x44, локальный стек 32; при попадании бокса (FUN_005cc6e0) callback param_3(начало, начало+count*8, ctx). Обёртка около 0x0060ed70: PUSH 0x0060ec20; CALL FUN_005cfb90 (тело callback 0x60ec20 не декомпилировано - TODO).
+- FUN_005c9b50 - глобальные настройки окружения: разбор строк RAINY/THUNDERSTORM/CLEAR/WINDY/THUNDERNORAIN и ARTFILTER/INSIDE/FOGPATCHES/GLOBAL_SETTINGS/FILTERS/CAMERA*; применение на DAT_006ecd10 через FUN_005c7690/FUN_005c78f0.
+- FUN_005c9f50/FUN_005c9f70 - поиск в таблице по строке (DAT_007895fc/DAT_00789790, strcmp-цикл).
+- FUN_00602ea0 - обход коллекции FUN_005b6e30 (единственный его caller) + матрицы FUN_0060d860 и др.; назначение не установлено.
+- FUN_005b9880 - таймер: если *(obj+0x1232c) в диапазоне (0, DAT_006ece6c) -> обнулить и FUN_005b9730().
+- FUN_0060bde0 - геттер объекта-держателя (используется FUN_005cf9b0: поля +0x30/+0x34/+0x38).
