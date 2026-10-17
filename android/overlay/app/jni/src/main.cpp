@@ -179,6 +179,14 @@ int main(int argc, char *argv[])
 		SDL_GetWindowSizeInPixels(window, &w, &h);
 	SDL_Log("окно librw: %dx%d", w, h);
 
+	// --- камера (как в bring-up №2: своя, с буферами под окно) ---
+	Camera *cam = Camera::create();
+	cam->setFrame(Frame::create());
+	cam->frameBuffer = Raster::create(w, h, 0, Raster::CAMERA);
+	cam->zBuffer = Raster::create(w, h, 0, Raster::ZBUFFER);
+	cam->setFarPlane(1000.0f);
+	SDL_Log("камера готова %dx%d", w, h);
+
 	// --- текстура игры ---
 	Texture *tex = nil;
 	{
@@ -229,7 +237,6 @@ int main(int argc, char *argv[])
 		if (tex) {
 			RGBA col;
 			col.red = 0; col.green = 0; col.blue = 0; col.alpha = 255;
-			Camera *cam = engine->currentCamera;
 			cam->beginUpdate();
 			cam->clear(&col, Camera::CLEARIMAGE | Camera::CLEARZ);
 			SetRenderState(ZTESTENABLE, 0);
@@ -251,7 +258,6 @@ int main(int argc, char *argv[])
 			col.green = 40;
 			col.blue = (uint8)(128.0f - 127.0f * SDL_sinf(t));
 			col.alpha = 255;
-			Camera *cam = engine->currentCamera;
 			cam->beginUpdate();
 			cam->clear(&col, Camera::CLEARIMAGE | Camera::CLEARZ);
 			cam->endUpdate();
@@ -263,6 +269,7 @@ int main(int argc, char *argv[])
 	if (tex) {
 		tex->destroy();
 	}
+	cam->destroy();
 
 	Engine::stop();
 	Engine::close();
