@@ -192,9 +192,22 @@ static int g_nquad;
 static float g_bmin[3] = { 1e9f, 1e9f, 1e9f };
 static float g_bmax[3] = { -1e9f, -1e9f, -1e9f };
 
+static float g_cen[3], g_span[3];
+
+static float pct(float *arr, int n, float f)
+{
+	int lo = (int)((n - 1) * f);
+	if (lo < 0) lo = 0;
+	if (lo > n - 1) lo = n - 1;
+	std::nth_element(arr, arr + lo, arr + n);
+	return arr[lo];
+}
+
 static void scanBSPquads(const uint8 *d, size_t len)
 {
+	static float xs[MAXQUADS * 4], ys[MAXQUADS * 4], zs[MAXQUADS * 4];
 	g_nquad = 0;
+	int nv = 0;
 	for (size_t o = 0x88; o + 48 <= len && g_nquad < MAXQUADS; o += 48) {
 		const float *f = (const float *)(d + o);
 		bool ok = true;
@@ -204,19 +217,24 @@ static void scanBSPquads(const uint8 *d, size_t len)
 		}
 		if (ok) {
 			memcpy(g_quad + g_nquad++ * 12, f, 48);
-			for (int v = 0; v < 4; v++) {
-				float X = f[v * 3 + 0], Y = f[v * 3 + 1], Z = f[v * 3 + 2];
-				if (X < g_bmin[0]) g_bmin[0] = X;
-				if (Y < g_bmin[1]) g_bmin[1] = Y;
-				if (Z < g_bmin[2]) g_bmin[2] = Z;
-				if (X > g_bmax[0]) g_bmax[0] = X;
-				if (Y > g_bmax[1]) g_bmax[1] = Y;
-				if (Z > g_bmax[2]) g_bmax[2] = Z;
+			for (int v = 0; v < 4 && nv < MAXQUADS * 4; v++, nv++) {
+				xs[nv] = f[v * 3 + 0];
+				ys[nv] = f[v * 3 + 1];
+				zs[nv] = f[v * 3 + 2];
 			}
 		}
 	}
-	SDL_Log("BSP: квадов %d; bbox=(%.0f,%.0f,%.0f)..(%.0f,%.0f,%.0f)",
-	        g_nquad, g_bmin[0], g_bmin[1], g_bmin[2], g_bmax[0], g_bmax[1], g_bmax[2]);
+	if (nv > 0) {
+		g_cen[0] = pct(xs, nv, 0.5f);
+		g_cen[1] = pct(ys, nv, 0.5f);
+		g_cen[2] = pct(zs, nv, 0.5f);
+		float x0 = pct(xs, nv, 0.05f), x1 = pct(xs, nv, 0.95f);
+		float y0 = pct(ys, nv, 0.05f), y1 = pct(ys, nv, 0.95f);
+		float z0 = pct(zs, nv, 0.05f), z1 = pct(zs, nv, 0.95f);
+		g_span[0] = x1 - x0; g_span[1] = y1 - y0; g_span[2] = z1 - z0;
+		SDL_Log("BSP: квадов %d; медиана=(%.0f,%.0f,%.0f); 5-95%% спаны=(%.0f,%.0f,%.0f)",
+		        g_nquad, g_cen[0], g_cen[1], g_cen[2], g_span[0], g_span[1], g_span[2]);
+	}
 }
 
 // Раскладка Im3DVertex из rwgl3.h — локальная копия байт-в-байт
@@ -345,12 +363,12 @@ int main(int argc, char *argv[])
 		SDL_Log("фолбэк: BSP нет — цветовое демо");
 
 	// --- стартная камера: центр уровня, вид вбок ---
-	float cx = 0.5f * (g_bmin[0] + g_bmax[0]);
-	float cy = 0.5f * (g_bmin[1] + g_bmax[1]);
-	float cz = 0.5f * (g_bmin[2] + g_bmax[2]);
-	float spanX = g_bmax[0] - g_bmin[0];
-	float spanZ = g_bmax[2] - g_bmin[2];
-	float orbit = spanX > spanZ ? spanX * 0.75f : spanZ * 0.75f;
+	float cx = g_cen[0];
+	float cy = g_cen[1];
+	float cz = g_cen[2];
+	float spanX = g_span[0];
+	float spanZ = g_span[2];
+	float orbit = spanX > spanZ ? spanX * 0.9f : spanZ * 0.9f;
 
 	bool running = true;
 	Uint64 t0 = SDL_GetTicks();
@@ -367,7 +385,7 @@ int main(int argc, char *argv[])
 			// облёт: орбита вокруг центра уровня
 			float t = (float)(SDL_GetTicks() - t0) * 0.001f;
 			float yaw = t * 0.2f;
-			float high = 45.0f + orbit * 0.1f;
+			float high = cy + orbit * 0.55f;
 			V3d campos = makeV3d(cx + orbit * cosf(yaw), high, cz + orbit * sinf(yaw));
 			V3d camdir = normalize(makeV3d(cx - campos.x, cy + 2.0f - campos.y, cz - campos.z));
 
