@@ -169,7 +169,7 @@ static Texture *texFromTCDT(const std::vector<uint8> &data, const char *label)
 	{
 		Image *img = Image::create(b.w, b.h, 32);
 		img->allocate();
-		img->setPixelsDXT(b.dxt, data.data() + b.off + 128);
+		img->setPixelsDXT(b.dxt, const_cast<uint8 *>(data.data() + b.off + 128));
 		Raster *ras = Raster::createFromImage(img);
 		img->destroy();
 		if (!ras)
