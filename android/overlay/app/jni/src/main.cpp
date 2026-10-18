@@ -363,15 +363,28 @@ int main(int argc, char *argv[])
 		cam->clear(&col, Camera::CLEARIMAGE | Camera::CLEARZ);
 
 		if (haveLevel) {
-			// орбита вокруг центра уровня
-			float yaw = t * 0.12f;
-			float eyr = cy + spanY * 0.9f;
-			float ex = cx + orbit * cosf(yaw);
-			float ez = cz + orbit * sinf(yaw);
+			// две фазы облёта: god-view сверху → street-level внутри коридоров
+			float phase = fmodf(t / 22.0f, 2.0f);
+			float yaw, ex, eyr, ez, tx = cx, ty = cy, tz = cz;
+			if (phase < 1.0f) {
+				yaw = t * 0.12f;
+				eyr = cy + spanY * 0.9f;
+				ex = cx + orbit * cosf(yaw);
+				ez = cz + orbit * sinf(yaw);
+			} else {
+				yaw = t * 0.15f;
+				float rr = (spanX > spanZ ? spanX : spanZ) * 0.18f + 6.0f;
+				eyr = g_bmin[1] + 2.5f;
+				ex = cx + rr * cosf(yaw);
+				ez = cz + rr * sinf(yaw);
+				tx = ex - sinf(yaw);
+				tz = ez + cosf(yaw);
+				ty = eyr + 0.5f;
+			}
 			static int nlog;
 			if (++nlog % 60 == 1)
-				SDL_Log("кам: pos=(%.1f,%.1f,%.1f) цел=(%.1f,%.1f,%.1f)",
-				        ex, eyr, ez, cx, cy, cz);
+				SDL_Log("кам%s: pos=(%.1f,%.1f,%.1f) цел=(%.1f,%.1f,%.1f)",
+				        phase < 1.0f ? "(god)" : "(street)", ex, eyr, ez, tx, ty, tz);
 
 			float proj[16], view[16], mvp[16];
 			matPerspective(proj, 70.0f, (float)w / (float)h, 0.2f, 800.0f);
