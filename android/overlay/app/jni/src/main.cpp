@@ -473,8 +473,8 @@ int main(int argc, char *argv[])
 	(void)argc;
 	(void)argv;
 
-	// жёстко альбомная ориентация (иначе камера создаётся от портретного окна и изображение сплюснуто)
-	SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeRight");
+	// альбом в обе стороны (право/лево — по датчику), иначе при удержании «в другую сторону» картинка вверх ногами
+	SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL_Init: %s", SDL_GetError());
 		return 1;
