@@ -208,7 +208,9 @@ static void scanBSPquads(const uint8 *d, size_t len)
 	static float xs[MAXQUADS * 4], ys[MAXQUADS * 4], zs[MAXQUADS * 4];
 	g_nquad = 0;
 	int nv = 0;
-	for (size_t o = 0x88; o + 48 <= len && g_nquad < MAXQUADS; o += 48) {
+	/* DLRW BSP: слой «plane-квадов» — доказанно валидный диапазон 0x88..0xE68 (74 квада) */
+	size_t end = len < 0xE68 ? len : 0xE68;
+	for (size_t o = 0x88; o + 48 <= end && g_nquad < MAXQUADS/2; o += 48) {
 		const float *f = (const float *)(d + o);
 		bool ok = true;
 		for (int k = 0; k < 12; k++) {
@@ -368,7 +370,7 @@ int main(int argc, char *argv[])
 	float cz = g_cen[2];
 	float spanX = g_span[0];
 	float spanZ = g_span[2];
-	float orbit = spanX > spanZ ? spanX * 0.9f : spanZ * 0.9f;
+	float orbit = spanX > spanZ ? spanX * 0.6f : spanZ * 0.6f;
 
 	bool running = true;
 	Uint64 t0 = SDL_GetTicks();
@@ -385,7 +387,7 @@ int main(int argc, char *argv[])
 			// облёт: орбита вокруг центра уровня
 			float t = (float)(SDL_GetTicks() - t0) * 0.001f;
 			float yaw = t * 0.2f;
-			float high = cy + orbit * 0.55f;
+			float high = cy + orbit * 0.35f;
 			V3d campos = makeV3d(cx + orbit * cosf(yaw), high, cz + orbit * sinf(yaw));
 			V3d camdir = normalize(makeV3d(cx - campos.x, cy + 2.0f - campos.y, cz - campos.z));
 
