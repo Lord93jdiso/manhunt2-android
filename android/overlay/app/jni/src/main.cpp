@@ -162,7 +162,7 @@ static bool parseTexmap(const std::vector<uint8> &data)
 	}
 	int n = (int)rd32(data.data() + 4);
 	size_t need = 8 + (size_t)n * 5;
-	if ((int)data.size() - 8 < (int)need) {
+	if (data.size() < need) {
 		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "texmap: коротко");
 		return false;
 	}
@@ -190,7 +190,7 @@ static bool parseTexall(const std::vector<uint8> &data)
 	int n = (int)rd32(data.data() + 4);
 	const uint8 *p = data.data() + 8;
 	size_t hdrend = 8 + (size_t)n * 8;
-	if ((int)data.size() - 8 < (int)hdrend) {
+	if (data.size() < hdrend) {
 		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "texall: коротко");
 		return false;
 	}
