@@ -965,14 +965,24 @@ int main(int argc, char *argv[])
 				glDrawElements(GL_TRIANGLES, (GLsizei)s.numIdx, GL_UNSIGNED_INT,
 				               (void *)(uintptr)(s.firstIdx * 4));
 			}
-			// --- Лео: меш с текстурами (у центра/под игроком) ---
-			if (g_leo.vao && !g_leo.vb.empty()) {
+			// позиция/поворот Лео: стоя у центра, в ручном — под игроком, yaw по камере
+			{
 				static bool leoBaseInit = false;
 				if (!leoBaseInit) {
 					leoBaseInit = true;
 					float ft = floorAt(cx, cz, cy + 2.0f);
 					g_leoBaseY = (ft > -1e8f) ? ft + 0.05f : g_bmin[1] + 0.05f;
 				}
+			}
+			float txLeo = cx, tyLeo = g_leoBaseY, tzLeo = cz, yawLeo = 0.0f;
+			if (manual) {
+				txLeo = eyeX;
+				tyLeo = g_walkFl;
+				tzLeo = eyeZ;
+				yawLeo = camYaw + 3.141593f;
+			}
+			// --- Лео: меш с текстурами (у центра/под игроком) ---
+			if (g_leo.vao && !g_leo.vb.empty()) {
 				glUniformMatrix4fv(g_locMvp, 1, GL_FALSE, mvp);
 				glUniform4f(g_locLeoOff, txLeo, tyLeo, tzLeo, yawLeo);
 				glUniform1f(g_locBoost, 1.25f);
@@ -995,14 +1005,6 @@ int main(int argc, char *argv[])
 					g_skelBaseY = ft + 0.05f;
 				g_leoBaseY = g_skelBaseY;
 				buildLeoSkelMesh(g_skelBaseY, cx, cz);
-			}
-			// позиция/поворот Лео: стоя у центра, в ручном — под игроком, yaw по камере
-			float txLeo = cx, tyLeo = g_leoBaseY, tzLeo = cz, yawLeo = 0.0f;
-			if (manual) {
-				txLeo = eyeX;
-				tyLeo = g_walkFl;
-				tzLeo = eyeZ;
-				yawLeo = camYaw + 3.141593f;
 			}
 			if (g_skelVerts > 0 && !g_leo.vao) {   // кости — только пока нет меша
 				glUniformMatrix4fv(g_locMvp, 1, GL_FALSE, mvp);
