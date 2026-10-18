@@ -256,7 +256,7 @@ static int g_nvert, g_nidx;
 static void buildGeoFromQuads(void)
 {
 	g_nvert = 0; g_nidx = 0;
-	const float S = 1.0f / 16.0f;
+	const float S = 1.0f / 8.0f;
 	for (int q = 0; q < g_nquad; q++) {
 		float *p = g_quad + q * 12;
 		// доминирующая ось — плоская UV-развёртка
@@ -385,12 +385,11 @@ int main(int argc, char *argv[])
 
 		if (haveBSP) {
 			// облёт: орбита вокруг центра уровня
-			/* GOD-VIEW диагностика: статичная камера сверху-сбоку */
 			float t = (float)(SDL_GetTicks() - t0) * 0.001f;
-			float nn = 1.0f / sqrtf(3.0f);
-			V3d campos = makeV3d(cx + 85.0f * nn, 95.0f, cz + 85.0f * nn);
-			V3d camdir = normalize(makeV3d(cx - campos.x, cy - campos.y, cz - campos.z));
-			(void)t;
+			float yaw = t * 0.2f;
+			float high = cy + orbit * 0.35f;
+			V3d campos = makeV3d(cx + orbit * cosf(yaw), high, cz + orbit * sinf(yaw));
+			V3d camdir = normalize(makeV3d(cx - campos.x, cy + 2.0f - campos.y, cz - campos.z));
 			static int nlog;
 			if (++nlog%30 == 1)
 				SDL_Log("кам: pos=(%.1f,%.1f,%.1f) dir=(%.2f,%.2f,%.2f)",
