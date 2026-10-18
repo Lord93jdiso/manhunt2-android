@@ -385,15 +385,16 @@ int main(int argc, char *argv[])
 
 		if (haveBSP) {
 			// облёт: орбита вокруг центра уровня
+			/* GOD-VIEW диагностика: статичная камера сверху-сбоку */
 			float t = (float)(SDL_GetTicks() - t0) * 0.001f;
-			float yaw = t * 0.2f;
-			float high = cy + orbit * 0.35f;
-			V3d campos = makeV3d(cx + orbit * cosf(yaw), high, cz + orbit * sinf(yaw));
-			V3d camdir = normalize(makeV3d(cx - campos.x, cy + 2.0f - campos.y, cz - campos.z));
+			float nn = 1.0f / sqrtf(3.0f);
+			V3d campos = makeV3d(cx + 85.0f * nn, 95.0f, cz + 85.0f * nn);
+			V3d camdir = normalize(makeV3d(cx - campos.x, cy - campos.y, cz - campos.z));
+			(void)t;
 			static int nlog;
 			if (++nlog%30 == 1)
-				SDL_Log("кам: t=%.1f yaw=%.2f pos=(%.1f,%.1f,%.1f) dir=(%.2f,%.2f,%.2f)",
-				        t, yaw, campos.x, campos.y, campos.z, camdir.x, camdir.y, camdir.z);
+				SDL_Log("кам: pos=(%.1f,%.1f,%.1f) dir=(%.2f,%.2f,%.2f)",
+				        campos.x, campos.y, campos.z, camdir.x, camdir.y, camdir.z);
 
 			Matrix m;
 			m.setIdentity();
