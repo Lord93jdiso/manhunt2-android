@@ -139,12 +139,77 @@ for name, arr in (('Leo_newhed', idx_face), ('Leo_bodA', idx_body)):
 
 texdata = bytearray()
 texs = []
-for png in (TEX1, TEX2):
-    im = Image.open(png).convert('RGBA')
-    W, H = im.size
-    raw = im.tobytes()
-    texs.append((W, H))
-    texdata += struct.pack('<II', W, H) + raw
+
+# --- TCDT-записи (та же схема, что в conv_bsp_tex.py) ---
+TEXFILE = 'pc/Manhunt_2_Win_Files_EN/Game Files/global/player_bod-leoc_pc.tex'
+t = open(TEXFILE, 'rb').read()
+def T32(a): return struct.unpack('<I', t[a:a+4])[0]
+def _pack565(r8, g8, b8):
+    return ((r8 >> 3) << 11) | ((g8 >> 2) << 5) | (b8 >> 3)
+
+def decode_block(c0, c1, bits):
+    r0 = (c0 >> 11) & 0x1F; g0 = (c0 >> 5) & 0x3F; b0 = c0 & 0x1F
+    r1 = (c1 >> 11) & 0x1F; g1 = (c1 >> 5) & 0x3F; b1 = c1 & 0x1F
+    R0 = (r0 * 527 + 31) >> 6; G0 = (g0 * 259 + 33) >> 6; B0 = (b0 * 527 + 31) >> 6
+    R1 = (r1 * 527 + 31) >> 6; G1 = (g1 * 259 + 33) >> 6; B1 = (b1 * 527 + 31) >> 6
+    if c0 > c1:
+        return (_pack565(R0, G0, B0), _pack565(R1, G1, B1),
+                _pack565((2*R0 + R1)//3, (2*G0 + G1)//3, (2*B0 + B1)//3),
+                _pack565((R0 + 2*R1)//3, (G0 + 2*G1)//3, (B0 + 2*B1)//3))
+    return (_pack565(R0, G0, B0), _pack565(R1, G1, B1), 0, 0)
+
+def dxt_decode(w, h, blob, fmt, flip=True):
+    out = bytearray(w * h * 2)
+    cw = (w + 3)//4; ch = (h + 3)//4
+    bo = 8 if fmt != 4 else 0
+    bs = 16 if fmt != 4 else 8
+    need = cw * ch * bs
+    if len(blob) < need:
+        blob = blob + b'\x00' * (need - len(blob))
+    for by in range(ch):
+        for bx in range(cw):
+            base = (by * cw + bx) * bs
+            c0, c1 = struct.unpack_from('<HH', blob, base + bo)
+            bits = struct.unpack_from('<I', blob, base + bo + 4)[0]
+            pal = decode_block(c0, c1, bits)
+            for py in range(4):
+                pyw = by * 4 + py
+                if pyw >= h: continue
+                roww = (h - 1 - pyw) if flip else pyw
+                for px in range(4):
+                    pxw = bx * 4 + px
+                    if pxw >= w: continue
+                    code = (bits >> (2 * (py * 4 + px))) & 3
+                    c = pal[code]
+                    struct.pack_into('<H', out, ((roww * w) + pxw) * 2, c)
+    return bytes(out)
+
+record_names = {}
+ai = 0x40
+tc = 0
+while ai and ai < len(t) and tc < 8:
+    tc += 1
+    w = T32(ai + 0x48); h = T32(ai + 0x4C); fmt = T32(ai + 0x50)
+    dat = T32(ai + 0x60); size = T32(ai + 0x68)
+    m = re.match(rb'[ -~]{1,64}', t[ai + 8:ai + 72])
+    name = m.group(0).decode('latin1') if m else 'texNAME?'
+    print('TCDT %-14s %dx%d fmt=%d dat=0x%X size=0x%X' % (name, w, h, fmt, dat, size))
+    if 8 <= w <= 2048 and 8 <= h <= 2048 and 0 < dat < len(t):
+        rgb565 = dxt_decode(w, h, t[dat:dat + size], fmt)
+        img = bytearray(w * h * 4)
+        for k in range(w * h):
+            c = struct.unpack_from('<H', rgb565, k * 2)[0]
+            img[k*4] = ((c >> 11) & 31) << 3; img[k*4 + 1] = ((c >> 5) & 63) << 2
+            img[k*4 + 2] = (c & 31) << 3; img[k*4 + 3] = 255
+        if 'bod' in name.lower():
+            record_names[0] = (w, h, bytes(img))
+        else:
+            record_names[1] = (w, h, bytes(img))
+    ai = T32(ai)
+for i in (0, 1):
+    w, h, raw = record_names[i]
+    texs.append((w, h))
+    texdata += struct.pack('<II', w, h) + raw
 
 buf = bytearray(b'MHP2')
 buf += struct.pack('<5I', 1, len(subs_meta), NV, base_i, len(texs))
