@@ -98,13 +98,13 @@ struct SubMesh
 };
 
 static std::vector<SubMesh> g_subs;
-static std::vector<uint8> g_verts;	// 24Б: pos f32×3 | rgba u8×4 | uv f32×2
+static std::vector<uint8> g_verts;	// 36Б: pos f32×3 | normal f32×3 | rgba u8×4 | uv f32×2
 static std::vector<uint32> g_idx;
 static float g_bmin[3], g_bmax[3];
 
 static bool parseMegamesh(const std::vector<uint8> &data)
 {
-	if (data.size() < 40 || memcmp(data.data(), "MMH1", 4) != 0) {
+	if (data.size() < 40 || memcmp(data.data(), "MMH2", 4) != 0) {
 		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "megamesh: неверная магия");
 		return false;
 	}
@@ -119,7 +119,7 @@ static bool parseMegamesh(const std::vector<uint8> &data)
 	SDL_Log("megamesh: subs=%u verts=%u idx=%u bbox=(%.1f,%.1f,%.1f)..(%.1f,%.1f,%.1f)",
 	        nsub, nvert, nidx, g_bmin[0], g_bmin[1], g_bmin[2], g_bmax[0], g_bmax[1], g_bmax[2]);
 	const uint8 *p = h + 40;
-	size_t need = (size_t)nsub * 44 + (size_t)nvert * 24 + (size_t)nidx * 4;
+	size_t need = (size_t)nsub * 44 + (size_t)nvert * 36 + (size_t)nidx * 4;
 	if (data.size() - 40 < need) {
 		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "megamesh: коротко %zu < %zu", data.size() - 40, need);
 		return false;
@@ -216,25 +216,30 @@ uniform mat4 u_mvp;
 layout(location=0) in vec3 a_pos;
 layout(location=1) in vec4 a_col;
 layout(location=2) in vec2 a_uv;
+layout(location=3) in vec3 a_nrm;
 out vec4 v_col;
 out vec2 v_uv;
-void main(){ gl_Position = u_mvp * vec4(a_pos, 1.0); v_col = a_col; v_uv = a_uv; })";
+out vec3 v_nrm;
+void main(){ gl_Position = u_mvp * vec4(a_pos, 1.0); v_col = a_col; v_uv = a_uv; v_nrm = a_nrm; })";
 
 static const char *FS = R"(#version 300 es
 precision mediump float;
 in vec4 v_col;
 in vec2 v_uv;
+in vec3 v_nrm;
 uniform sampler2D u_tex;
-uniform vec3 u_matcol;
 uniform float u_boost;
 out vec4 fragColor;
+const vec3 SUN = normalize(vec3(0.25, 1.0, 0.15));
+const vec3 SUNCOL = vec3(1.0, 0.97, 0.90);
 void main(){
   vec3 tc = texture(u_tex, v_uv).rgb;
-  vec3 c = tc * u_boost;
-  fragColor = vec4(min(c, vec3(1.0)), 1.0); })";
+  float ndl = clamp(dot(normalize(v_nrm), SUN), 0.0, 1.0);
+  vec3 c = tc * (vec3(0.32) + SUNCOL * ndl * 0.85);
+  fragColor = vec4(min(c * u_boost, vec3(1.0)), 1.0); })";
 
 static GLuint g_prog, g_vao, g_vbo, g_ibo;
-static GLint g_locMvp = -1, g_locBoost = -1, g_locMatcol = -1, g_locTex = -1, g_locScrW = -1;
+static GLint g_locMvp = -1, g_locBoost = -1, g_locTex = -1;
 static std::vector<GLuint> g_texArr;
 static GLuint g_whiteTex = 0;
 static int g_texErrCount;
@@ -279,8 +284,6 @@ static void buildGL(const std::vector<uint8> &verts, const std::vector<uint32> &
 	}
 	g_locMvp = glGetUniformLocation(g_prog, "u_mvp");
 	g_locBoost = glGetUniformLocation(g_prog, "u_boost");
-	g_locMatcol = glGetUniformLocation(g_prog, "u_matcol");
-	g_locScrW = glGetUniformLocation(g_prog, "u_scrw");
 	g_locTex = glGetUniformLocation(g_prog, "u_tex");
 
 	glGenVertexArrays(1, &g_vao);
@@ -291,12 +294,14 @@ static void buildGL(const std::vector<uint8> &verts, const std::vector<uint32> &
 	glBufferData(GL_ARRAY_BUFFER, verts.size(), verts.data(), GL_STATIC_DRAW);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_ibo);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * 4, idx.data(), GL_STATIC_DRAW);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 24, (void *)(uintptr)0);
-	glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, 24, (void *)(uintptr)12);
-	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 24, (void *)(uintptr)16);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 36, (void *)(uintptr)0);
+	glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 36, (void *)(uintptr)12);
+	glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, 36, (void *)(uintptr)24);
+	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 36, (void *)(uintptr)28);
 	glEnableVertexAttribArray(0);
 	glEnableVertexAttribArray(1);
 	glEnableVertexAttribArray(2);
+	glEnableVertexAttribArray(3);
 
 	// текстуры (RGB565, mip0, REPEAT)
 	int n = (int)g_tex.size();
@@ -501,31 +506,64 @@ int main(int argc, char *argv[])
 			glBindVertexArray(g_vao);
 			glUseProgram(g_prog);
 			glUniformMatrix4fv(g_locMvp, 1, GL_FALSE, mvp);
-			glUniform1f(g_locBoost, 1.25f);
-			glUniform1f(g_locScrW, (float)w);
+			glUniform1f(g_locBoost, 1.2f);
 			glUniform1i(g_locTex, 0);
-			glUniform3f(g_locMatcol, 1.0f, 1.0f, 1.0f);
 			glActiveTexture(GL_TEXTURE0);
 			glDisable(GL_BLEND);
 			glDisable(GL_CULL_FACE);
 			glEnable(GL_DEPTH_TEST);
 			glDepthFunc(GL_LEQUAL);
+			// фрустум (Грибб-Хартманн, column-major mvp): строка3 ± строка{0,1,2}
+			float planes[6][4];
+			for (int p = 0; p < 6; p++) {
+				const int grp = p / 2;   // 0:LR, 1:BT, 2:NF
+				const int sgn = (p % 2) ? -1 : +1;
+				for (int k = 0; k < 4; k++) {
+					float a = 0, b = 0;   // строка 3 ± строка grp
+					a = mvp[k * 4 + 3];
+					b = mvp[k * 4 + grp];
+					planes[p][k] = a + sgn * b;
+				}
+			}
+			size_t total = 0, drawn = 0;
 			for (size_t i = 0; i < g_subs.size(); i++) {
 				const SubMesh &s = g_subs[i];
 				if (s.numIdx == 0)
 					continue;
+				total++;
+				// AABB против 6 плоскостей: positive-vertex тест
+				bool vis = true;
+				for (int p = 0; p < 6 && vis; p++) {
+					float x = planes[p][0] > 0 ? s.bbox[3] : s.bbox[0];
+					float y = planes[p][1] > 0 ? s.bbox[4] : s.bbox[1];
+					float z = planes[p][2] > 0 ? s.bbox[5] : s.bbox[2];
+					if (planes[p][0] * x + planes[p][1] * y + planes[p][2] * z + planes[p][3] < 0)
+						vis = false;
+				}
+				if (!vis)
+					continue;
+				drawn++;
 				int mi = (int)s.mat;
 				GLuint tex = g_whiteTex;
 				if (mi >= 0 && mi < g_nmat && g_matTex[mi] >= 0 &&
 				    g_matTex[mi] < (int)g_texArr.size())
 					tex = g_texArr[g_matTex[mi]];
 				glBindTexture(GL_TEXTURE_2D, tex);
-				glUniform3f(g_locMatcol,
-				            g_matCol[mi * 3 + 0],
-				            g_matCol[mi * 3 + 1],
-				            g_matCol[mi * 3 + 2]);
 				glDrawElements(GL_TRIANGLES, (GLsizei)s.numIdx, GL_UNSIGNED_INT,
 				               (void *)(uintptr)(s.firstIdx * 4));
+			}
+			// FPS-статистика раз в 2с
+			static float fpsAcc, fpsDt;
+			static int fpsN;
+			fpsDt = (float)(SDL_GetTicks() - t0) * 0.001f - fpsAcc;
+			fpsAcc = (float)(SDL_GetTicks() - t0) * 0.001f;
+			fpsN++;
+			static int fpsLogged;
+			if (fpsAcc - float(fpsLogged * 2) >= 2.0f) {
+				SDL_Log("fps=%.0f draw=%zu/%zu t=%.0fс", fpsN / (fpsAcc - float(fpsLogged * 2)),
+				        drawn, total, fpsAcc);
+				fpsLogged = (int)(fpsAcc / 2.0f);
+				fpsN = 0;
 			}
 		}
 		cam->endUpdate();

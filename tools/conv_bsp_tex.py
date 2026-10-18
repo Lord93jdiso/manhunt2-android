@@ -28,17 +28,52 @@ out_subs=[]; out_verts=[]; out_idx=[]; gbmin=[1e9]*3; gbmax=[-1e9]*3
 for (o,smc,ic,vc,base) in res:
     idxb = base + smc*0x2C; vb = idxb + ic*2
     vbase = len(out_verts); ibase = len(out_idx)
+    # 1) позиции всех вершин меша
+    pos=[]
     for k in range(vc):
         a = vb + k*40
         x,y,z = F32(a), F32(a+4), F32(a+8)
-        b,g,r,al = d[a+20],d[a+21],d[a+22],d[a+23]
-        u,v = F32(a+24), F32(a+28)
-        if not(-90<=x<=140 and -90<=y<=140 and -90<=z<=140 and math.isfinite(u) and math.isfinite(v)):
-            continue
-        out_verts.append(struct.pack('<fff4Bff', x,y,z, r,g,b,al, u,v))
+        if not(-90<=x<=140 and -90<=y<=140 and -90<=z<=140):
+            x,y,z = 0.0,0.0,0.0
+        pos.append((x,y,z))
         for c,val in ((0,x),(1,y),(2,z)):
             if val < gbmin[c]: gbmin[c]=val
             if val > gbmax[c]: gbmax[c]=val
+    # 2) вертексные нормали = среднее нормалей треугольников (по всем подмешам меша)
+    acc = [ [0.0,0.0,0.0] for _ in range(vc) ]
+    for rr in range(smc):
+        a = base + rr*0x2C
+        cnt = U32(a+24) & 0xFFFF; start = U32(a+28) & 0xFFFF
+        for k in range(0, cnt - 2, 3):
+            i0 = struct.unpack_from('<H', d, idxb+(start+k)*2)[0]
+            i1 = struct.unpack_from('<H', d, idxb+(start+k+1)*2)[0]
+            i2 = struct.unpack_from('<H', d, idxb+(start+k+2)*2)[0]
+            if i0 >= vc or i1 >= vc or i2 >= vc: continue
+            ax,ay,az = pos[i0]; bx,by,bz = pos[i1]; cx,cy,cz = pos[i2]
+            e1x,e1y,e1z = bx-ax, by-ay, bz-az
+            e2x,e2y,e2z = cx-ax, cy-ay, cz-az
+            nx,ny,nz = e1y*e2z-e1z*e2y, e1z*e2x-e1x*e2z, e1x*e2y-e1y*e2x
+            ln = math.sqrt(nx*nx+ny*ny+nz*nz)
+            if ln <= 1e-12: continue
+            nx,ny,nz = nx/ln, ny/ln, nz/ln
+            for ii in (i0,i1,i2):
+                acc[ii][0]+=nx; acc[ii][1]+=ny; acc[ii][2]+=nz
+    verts=[]
+    for k in range(vc):
+        a = vb + k*40
+        b,g,r,al = d[a+20],d[a+21],d[a+22],d[a+23]
+        u,v = F32(a+24), F32(a+28)
+        if not (math.isfinite(u) and math.isfinite(v)): u,v = 0.0,0.0
+        n = acc[k]
+        ln = math.sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2])
+        if ln > 1e-9: n = (n[0]/ln, n[1]/ln, n[2]/ln)
+        else: n = (0.0, 1.0, 0.0)
+        x,y,z = pos[k]
+        verts.append(struct.pack('<6f4Bff', x,y,z, n[0],n[1],n[2], r,g,b,al, u, v))
+    assert len(verts[0]) == 36
+    vbase = len(out_verts)
+    for vt in verts: out_verts.append(vt)
+    # 3) подмеши (индексы глобальные)
     for rr in range(smc):
         a = base + rr*0x2C
         u32v = U32(a+24); cnt = u32v & 0xFFFF; mat = u32v >> 16
@@ -140,7 +175,7 @@ print("материал→текстура: %d/%d" % (found, MCNT))
 
 # ---------------- emit ----------------
 b = io.BytesIO()
-b.write(b'MMH1')
+b.write(b'MMH2')
 b.write(struct.pack('<I', len(out_subs))); b.write(struct.pack('<I', len(out_verts))); b.write(struct.pack('<I', len(out_idx)))
 b.write(struct.pack('<3f', *gbmin)); b.write(struct.pack('<3f', *gbmax))
 for (vbase,vc,ibase,cnt,mat,bx) in out_subs:
