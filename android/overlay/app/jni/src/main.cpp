@@ -227,18 +227,17 @@ in vec2 v_uv;
 uniform sampler2D u_tex;
 uniform vec3 u_matcol;
 uniform float u_boost;
-uniform float u_scrw;
 out vec4 fragColor;
 void main(){
   vec3 tc = texture(u_tex, v_uv).rgb;
-  float x = gl_FragCoord.x / u_scrw;
-  vec3 c = (x < 0.33) ? vec3(1.0, 0.0, 0.0) : (x < 0.66) ? vec3(v_uv, 0.25) : tc * u_boost;
+  vec3 c = tc * u_boost;
   fragColor = vec4(min(c, vec3(1.0)), 1.0); })";
 
 static GLuint g_prog, g_vao, g_vbo, g_ibo;
 static GLint g_locMvp = -1, g_locBoost = -1, g_locMatcol = -1, g_locTex = -1, g_locScrW = -1;
 static std::vector<GLuint> g_texArr;
 static GLuint g_whiteTex = 0;
+static int g_texErrCount;
 
 static GLuint makeShader(GLenum type, const char *src)
 {
@@ -307,15 +306,19 @@ static void buildGL(const std::vector<uint8> &verts, const std::vector<uint32> &
 		glBindTexture(GL_TEXTURE_2D, g_texArr[i]);
 		setupTexParams();
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB565, g_tex[i].w, g_tex[i].h, 0,
-		             GL_RGB565, GL_UNSIGNED_SHORT_5_6_5,
+		             GL_RGB, GL_UNSIGNED_SHORT_5_6_5,
 		             g_texData.data() + g_tex[i].off);
+		GLenum err = glGetError();
+		if (err != GL_NO_ERROR && g_texErrCount < 3)
+			SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "texImage2D(%d): ошибка 0x%x", i, err);
+		++g_texErrCount;
 	}
 	// белая заглушка
 	glGenTextures(1, &g_whiteTex);
 	glBindTexture(GL_TEXTURE_2D, g_whiteTex);
 	setupTexParams();
 	uint16 white = 0xFFFF;
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB565, 2, 2, 0, GL_RGB565,
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB565, 2, 2, 0, GL_RGB,
 	             GL_UNSIGNED_SHORT_5_6_5, &white);
 	glBindTexture(GL_TEXTURE_2D, 0);
 	glBindVertexArray(0);
