@@ -136,8 +136,8 @@ static bool parseMegamesh(const std::vector<uint8> &data)
 			s.bbox[k] = rdf32(p + 20 + 4 * k);
 		p += 44;
 	}
-	g_verts.assign(p, p + (size_t)nvert * 24);
-	p += (size_t)nvert * 24;
+	g_verts.assign(p, p + (size_t)nvert * 36);
+	p += (size_t)nvert * 36;
 	g_idx.resize(nidx);
 	memcpy(g_idx.data(), p, (size_t)nidx * 4);
  SDL_Log("megamesh: разобран");
