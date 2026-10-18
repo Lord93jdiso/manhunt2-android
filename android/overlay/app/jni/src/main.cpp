@@ -397,6 +397,77 @@ static void matLookAt(float *m, float ex, float ey, float ez,
 	m[15] = 1.0f;
 }
 
+// --- коллизии: raycast по треугольникам мегамеша (Мёллер–Трумбор, двусторонний) ---
+static float rayTri(const float o[3], const float d[3],
+                    const float a[3], const float b[3], const float c[3])
+{
+	float e1x = b[0]-a[0], e1y = b[1]-a[1], e1z = b[2]-a[2];
+	float e2x = c[0]-a[0], e2y = c[1]-a[1], e2z = c[2]-a[2];
+	float px = d[1]*e2z - d[2]*e2y;
+	float py = d[2]*e2x - d[0]*e2z;
+	float pz = d[0]*e2y - d[1]*e2x;
+	float det = e1x*px + e1y*py + e1z*pz;
+	if (det > -1e-9f && det < 1e-9f) return -1.0f;
+	float inv = 1.0f / det;
+	float sx = o[0]-a[0], sy = o[1]-a[1], sz = o[2]-a[2];
+	float u = (sx*px + sy*py + sz*pz) * inv;
+	if (u < -1e-4f || u > 1.0001f) return -1.0f;
+	float qx = sy*e1z - sz*e1y;
+	float qy = sz*e1x - sx*e1z;
+	float qz = sx*e1y - sy*e1x;
+	float v = (d[0]*qx + d[1]*qy + d[2]*qz) * inv;
+	if (v < -1e-4f || u + v > 1.0001f) return -1.0f;
+	float tt = (e2x*qx + e2y*qy + e2z*qz) * inv;
+	return tt >= 0.0f ? tt : -1.0f;
+}
+
+// Ближайшее пересечение луча с геометрией уровня в пределах maxT; -1 — мимо.
+// Подмеши фильтруются AABB-ом отрезка (тот же bbox, что в куллинге).
+static float castRay(float ox, float oy, float oz, float dx, float dy, float dz, float maxT)
+{
+	float ax0 = ox, ax1 = ox + dx*maxT, ay0 = oy, ay1 = oy + dy*maxT, az0 = oz, az1 = oz + dz*maxT;
+	if (ax0 > ax1) { float q = ax0; ax0 = ax1; ax1 = q; }
+	if (ay0 > ay1) { float q = ay0; ay0 = ay1; ay1 = q; }
+	if (az0 > az1) { float q = az0; az0 = az1; az1 = q; }
+	float best = -1.0f;
+	for (size_t si = 0; si < g_subs.size(); si++) {
+		const SubMesh &s = g_subs[si];
+		if (s.bbox[0] > ax1 || s.bbox[3] < ax0 || s.bbox[1] > ay1 ||
+		    s.bbox[4] < ay0 || s.bbox[2] > az1 || s.bbox[5] < az0)
+			continue;
+		const uint32 i0 = s.firstIdx, ni = s.numIdx;
+		for (uint32 j = 0; j + 2 < ni; j += 3) {
+			const float *p1 = (const float *)(g_verts.data() + (size_t)g_idx[i0 + j] * 36);
+			const float *p2 = (const float *)(g_verts.data() + (size_t)g_idx[i0 + j + 1] * 36);
+			const float *p3 = (const float *)(g_verts.data() + (size_t)g_idx[i0 + j + 2] * 36);
+			float o[3] = {ox, oy, oz}, d[3] = {dx, dy, dz};
+			float tt = rayTri(o, d, p1, p2, p3);
+			if (tt >= 0.0f && tt <= maxT && (best < 0.0f || tt < best))
+				best = tt;
+		}
+	}
+	return best;
+}
+
+// Пол под точкой: луч вниз от fromY (fromY = ступни + шаг подъёма 0.6).
+static float floorAt(float x, float z, float fromY)
+{
+	float tt = castRay(x, fromY, z, 0.0f, -1.0f, 0.0f, 40.0f);
+	return tt >= 0.0f ? fromY - tt : -1e9f;
+}
+
+// Стена по ходу движения? Два горизонтальных луча: голень (+0.35) и грудь (+1.35).
+static bool wallBlocked(float x, float z, float feetY, float dx, float dz, float dist)
+{
+	static const float hs[2] = {0.35f, 1.35f};
+	for (int k = 0; k < 2; k++) {
+		float tt = castRay(x, feetY + hs[k], z, dx, 0.0f, dz, dist + 0.12f);
+		if (tt >= 0.0f)
+			return true;
+	}
+	return false;
+}
+
 int main(int argc, char *argv[])
 {
 	(void)argc;
@@ -484,6 +555,7 @@ int main(int argc, char *argv[])
 	float lookLX = 0.0f, lookLY = 0.0f;
 	float lastT = 0.0f;
 	static int nmanlog;
+	bool spawned = false;   // первая установка на пол при входе в ручной режим
 	int nDown = 0, nMotion = 0, nUp = 0;
 
 	bool running = true;
@@ -540,27 +612,57 @@ int main(int argc, char *argv[])
 		if (haveLevel) {
 			float yaw, ex, eyr, ez, tx = cx, ty = cy, tz = cz;
 			if (manual) {
-				// движение: вперёд по -Y тача, вбок по +X
+				// ходьба: пол по raycast-у вниз, стены блокируют по осям (скольжение)
 				float cp = cosf(camPitch), sp = sinf(camPitch);
 				float sy = sinf(camYaw), cyaw = cosf(camYaw);
 				float fx = cp * sy, fy = sp, fz = -cp * cyaw;   // вперёд
 				float rx = cyaw, rz = sy;                        // вправо (без pitch)
-				float speed = 7.0f;
-				if (!(moveFinger < 0)) {
+				const float speed = 5.0f, EYE_H = 1.65f;
+				if (!spawned) {   // первый вход в ручной режим — ставим глаза на пол
+					spawned = true;
+					float fy = -1e9f;
+					for (float py = eyeY + 3.0f; py < g_bmax[1] + 1.0f; py += 5.0f) {
+						float f0 = floorAt(eyeX, eyeZ, py);
+						if (f0 > -1e8f) { fy = f0; break; }
+					}
+					if (fy > -1e8f) eyeY = fy + EYE_H;
+					SDL_Log("спавн: пол=%.1f глаз=%.1f", fy, eyeY);
+				}
+				float fl = -1e9f;
+				if (moveFinger >= 0) {
 					float mvx = moveDX * 2.2f, mvy = moveDY * 2.2f;
 					if (mvx > 1.6f) mvx = 1.6f; if (mvx < -1.6f) mvx = -1.6f;
 					if (mvy > 1.6f) mvy = 1.6f; if (mvy < -1.6f) mvy = -1.6f;
-					eyeX += (fx * -mvy + rx * mvx) * speed * dt;
-					eyeY += (fy * -mvy) * speed * dt;
-					eyeZ += (fz * -mvy + rz * mvx) * speed * dt;
-					if (eyeY < g_bmin[1] + 1.0f) eyeY = g_bmin[1] + 1.0f;
-					if (eyeY > g_bmax[1] - 1.0f) eyeY = g_bmax[1] - 1.0f;
+					float dirX = fx * -mvy + rx * mvx;
+					float dirZ = fz * -mvy + rz * mvx;
+					float mag = sqrtf(dirX * dirX + dirZ * dirZ);
+					if (mag > 1e-4f) {
+						dirX /= mag; dirZ /= mag;
+						float feet0 = eyeY - EYE_H;
+						float dist = speed * dt * (mag < 1.0f ? mag : 1.0f);
+						// скольжение вдоль стен: оси X/Z блокируются независимо
+						if (dirX != 0.0f && !wallBlocked(eyeX, eyeZ, feet0, dirX, 0.0f, dist))
+							eyeX += dirX * dist;
+						if (dirZ != 0.0f && !wallBlocked(eyeX, eyeZ, feet0, 0.0f, dirZ, dist))
+							eyeZ += dirZ * dist;
+						if (eyeX < g_bmin[0] + 0.5f) eyeX = g_bmin[0] + 0.5f;
+						if (eyeX > g_bmax[0] - 0.5f) eyeX = g_bmax[0] - 0.5f;
+						if (eyeZ < g_bmin[2] + 0.5f) eyeZ = g_bmin[2] + 0.5f;
+						if (eyeZ > g_bmax[2] - 0.5f) eyeZ = g_bmax[2] - 0.5f;
+					}
+				}
+				// пол: плавное следование (ступени вверх, падение с уступов)
+				float feet = eyeY - EYE_H;
+				fl = floorAt(eyeX, eyeZ, feet + 0.6f);
+				if (fl > -1e8f) {
+					float k = dt * 10.0f; if (k > 1.0f) k = 1.0f;
+					eyeY += (fl + EYE_H - eyeY) * k;
 				}
 				ex = eyeX; eyr = eyeY; ez = eyeZ;
 				tx = ex + fx; ty = eyr + fy; tz = ez + fz;
 				if (++nmanlog % 120 == 1)
-					SDL_Log("кам(man): pos=(%.1f,%.1f,%.1f) yaw=%.2f pitch=%.2f",
-					        ex, eyr, ez, camYaw, camPitch);
+					SDL_Log("ходьба: pos=(%.1f,%.1f,%.1f) пол=%.1f yaw=%.2f pitch=%.2f",
+					        ex, eyr, ez, fl, camYaw, camPitch);
 			} else {
 				// две фазы: god-view → street-level
 				float phase = fmodf(t / 22.0f, 2.0f);
