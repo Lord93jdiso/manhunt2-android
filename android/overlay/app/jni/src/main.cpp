@@ -101,20 +101,6 @@ struct SubMesh
 static std::vector<SubMesh> g_subs;
 static std::vector<uint32> g_drawOrder;	// порядок отрисовки: сгруппирован по текстуре
 
-static void buildDrawOrder(void)
-{
-	size_t n = g_subs.size();
-	std::vector<int> texOf(n);
-	for (size_t i = 0; i < n; i++) {
-		int mi = (int)g_subs[i].mat;
-		texOf[i] = (mi >= 0 && mi < g_nmat) ? (int)g_matTex[mi] : -1;
-	}
-	g_drawOrder.resize(n);
-	for (size_t i = 0; i < n; i++)
-		g_drawOrder[i] = (uint32)i;
-	std::sort(g_drawOrder.begin(), g_drawOrder.end(),
-	          [&texOf](size_t a, size_t b) { return texOf[a] < texOf[b]; });
-}
 static std::vector<uint8> g_verts;	// 36Б: pos f32×3 | normal f32×3 | rgba u8×4 | uv f32×2
 static std::vector<uint32> g_idx;
 static float g_bmin[3], g_bmax[3];
@@ -170,6 +156,21 @@ static std::vector<uint8> g_texData;
 static std::vector<int16> g_matTex;
 static std::vector<float> g_matCol;	// 3 на материал
 static int g_nmat;
+
+static void buildDrawOrder(void)
+{
+	size_t n = g_subs.size();
+	std::vector<int> texOf(n);
+	for (size_t i = 0; i < n; i++) {
+		int mi = (int)g_subs[i].mat;
+		texOf[i] = (mi >= 0 && mi < g_nmat) ? (int)g_matTex[mi] : -1;
+	}
+	g_drawOrder.resize(n);
+	for (size_t i = 0; i < n; i++)
+		g_drawOrder[i] = (uint32)i;
+	std::sort(g_drawOrder.begin(), g_drawOrder.end(),
+	          [&texOf](size_t a, size_t b) { return texOf[a] < texOf[b]; });
+}
 
 static bool parseTexmap(const std::vector<uint8> &data)
 {
