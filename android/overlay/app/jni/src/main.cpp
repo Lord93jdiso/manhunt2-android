@@ -230,7 +230,7 @@ uniform float u_boost;
 out vec4 fragColor;
 void main(){
   vec3 tc = texture(u_tex, v_uv).rgb;
-  vec3 c = v_col.rgb * u_matcol * tc * u_boost;
+  vec3 c = tc * u_boost;
   fragColor = vec4(min(c, vec3(1.0)), 1.0); })";
 
 static GLuint g_prog, g_vao, g_vbo, g_ibo;
@@ -495,7 +495,7 @@ int main(int argc, char *argv[])
 			glBindVertexArray(g_vao);
 			glUseProgram(g_prog);
 			glUniformMatrix4fv(g_locMvp, 1, GL_FALSE, mvp);
-			glUniform1f(g_locBoost, 5.0f);
+			glUniform1f(g_locBoost, 1.25f);
 			glUniform1i(g_locTex, 0);
 			glUniform3f(g_locMatcol, 1.0f, 1.0f, 1.0f);
 			glActiveTexture(GL_TEXTURE0);
