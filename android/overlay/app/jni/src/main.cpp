@@ -887,10 +887,11 @@ int main(int argc, char *argv[])
 				               (void *)(uintptr)(s.firstIdx * 4));
 			}
 			// --- скелет Лео: линии bone(родитель→потомок) на полу у центра ---
-			if (g_skelVao && g_skelVerts > 0) {
-				static float skelFtY = 0.0f;
-				if (skelFtY == 0.0f) {
-					skelFtY = g_bmin[1] + 0.05f;
+			if (!g_skel.empty()) {
+				static bool skelBuilt = false;
+				if (!skelBuilt) {
+					skelBuilt = true;
+					float skelFtY = g_bmin[1] + 0.05f;
 					float ft = floorAt(cx, cz, cy + 2.0f);
 					if (ft > -1e8f)
 						skelFtY = ft + 0.05f;
