@@ -227,10 +227,12 @@ in vec2 v_uv;
 uniform sampler2D u_tex;
 uniform vec3 u_matcol;
 uniform float u_boost;
+uniform float u_scrw;
 out vec4 fragColor;
 void main(){
   vec3 tc = texture(u_tex, v_uv).rgb;
-  vec3 c = tc * u_boost;
+  float x = gl_FragCoord.x / u_scrw;
+  vec3 c = (x < 0.33) ? vec3(1.0, 0.0, 0.0) : (x < 0.66) ? vec3(v_uv, 0.25) : tc * u_boost;
   fragColor = vec4(min(c, vec3(1.0)), 1.0); })";
 
 static GLuint g_prog, g_vao, g_vbo, g_ibo;
@@ -279,6 +281,7 @@ static void buildGL(const std::vector<uint8> &verts, const std::vector<uint32> &
 	g_locMvp = glGetUniformLocation(g_prog, "u_mvp");
 	g_locBoost = glGetUniformLocation(g_prog, "u_boost");
 	g_locMatcol = glGetUniformLocation(g_prog, "u_matcol");
+	GLint locScrW = glGetUniformLocation(g_prog, "u_scrw");
 	g_locTex = glGetUniformLocation(g_prog, "u_tex");
 
 	glGenVertexArrays(1, &g_vao);
@@ -496,6 +499,7 @@ int main(int argc, char *argv[])
 			glUseProgram(g_prog);
 			glUniformMatrix4fv(g_locMvp, 1, GL_FALSE, mvp);
 			glUniform1f(g_locBoost, 1.25f);
+			glUniform1f(locScrW, (float)w);
 			glUniform1i(g_locTex, 0);
 			glUniform3f(g_locMatcol, 1.0f, 1.0f, 1.0f);
 			glActiveTexture(GL_TEXTURE0);
