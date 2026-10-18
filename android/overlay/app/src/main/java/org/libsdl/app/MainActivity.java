@@ -1,11 +1,12 @@
 package org.libsdl.app;
 
 /* Полноэкранная обёртка над SDLActivity:
-   - скрывает системные бары (immersive sticky),
-   - рендер в область выреза (full-bleed, короткие края),
+   - скрывает системные бары (immersive sticky), в т.ч. повторно при возврате фокуса,
+   - рендер в область выреза (full-bleed), бары прозрачные,
    - экран не гаснет во время игры.
    Манифест CI-патчем переключается на этот класс (android:name=".MainActivity"). */
 
+import android.graphics.Color;
 import android.os.Bundle;
 import android.view.View;
 import android.view.Window;
@@ -15,12 +16,9 @@ import android.view.WindowManager;
 
 public class MainActivity extends SDLActivity
 {
-    @Override
-    public void onCreate(Bundle savedInstanceState)
+    private void hideBars(Window w)
     {
-        super.onCreate(savedInstanceState);
         try {
-            Window w = getWindow();
             if (android.os.Build.VERSION.SDK_INT >= 30) {
                 w.setDecorFitsSystemWindows(false);
                 WindowInsetsController c = w.getInsetsController();
@@ -37,9 +35,28 @@ public class MainActivity extends SDLActivity
                   | View.SYSTEM_UI_FLAG_FULLSCREEN
                   | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
             }
-            w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            w.setStatusBarColor(Color.TRANSPARENT);
+            w.setNavigationBarColor(Color.TRANSPARENT);
         } catch (Throwable t) {
             // декорации не критичны — играем и так
         }
+    }
+
+    @Override
+    public void onCreate(Bundle savedInstanceState)
+    {
+        super.onCreate(savedInstanceState);
+        try {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } catch (Throwable t) { }
+        hideBars(getWindow());
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus)
+    {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus)
+            hideBars(getWindow());
     }
 }
