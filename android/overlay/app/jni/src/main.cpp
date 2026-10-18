@@ -238,6 +238,8 @@ static GLuint g_skelVao = 0, g_skelVbo = 0;
 static GLsizei g_skelVerts = 0;
 static bool g_skelBuilt = false;
 static float g_skelBaseY = 0.0f;
+static float g_leoBaseY = 0.0f;
+static float g_walkFl = 0.0f;
 
 static bool parseLeoSkel(const std::vector<uint8> &data)
 {
@@ -306,10 +308,100 @@ static void buildLeoSkelMesh(float ftY, float ox, float oz)
 	SDL_Log("скелет: %d сегментов, база y=%.2f центр=(%.1f,%.1f)", g_skelVerts / 2, ftY, ox, oz);
 }
 
+// --- Лео-меш (MHP2: контейнер из conv_mdl.py) ---
+
+struct LeoSub { uint32 vlo, vhi, ifirst, nidx, tex; std::string name; };
+struct LeoMesh {
+	std::vector<uint8> vb;
+	std::vector<uint32> ib;
+	std::vector<LeoSub> subs;
+	std::vector<std::vector<uint8>> tex;   // RGBA
+	GLuint vao = 0, vbo = 0, ibo = 0;
+	std::vector<GLuint> glTex;
+};
+static LeoMesh g_leo;
+
+static bool parseLeoMesh(const std::vector<uint8> &d)
+{
+	if (d.size() < 24 || memcmp(d.data(), "MHP2", 4) != 0) {
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "лео-меш: магия не MHP2");
+		return false;
+	}
+	uint32 ver, nsub, nvert, nidx, ntex;
+	memcpy(&ver, d.data() + 4, 4);
+	memcpy(&nsub, d.data() + 8, 4);
+	memcpy(&nvert, d.data() + 12, 4);
+	memcpy(&nidx, d.data() + 16, 4);
+	memcpy(&ntex, d.data() + 20, 4);
+	size_t p = 24;
+	g_leo.subs.resize(nsub);
+	for (uint32 i = 0; i < nsub; i++) {
+		uint32 vlo, vhi, ifirst, nn, tex;
+		memcpy(&vlo, d.data() + p, 4); memcpy(&vhi, d.data() + p + 4, 4);
+		memcpy(&ifirst, d.data() + p + 8, 4); memcpy(&nn, d.data() + p + 12, 4);
+		memcpy(&tex, d.data() + p + 16, 4);
+		uint8 nl = d[p + 20];
+		g_leo.subs[i] = { vlo, vhi, ifirst, nn, tex,
+		                  std::string((const char *)d.data() + p + 22, nl) };
+		p += 22 + nl;
+	}
+	size_t vsize = (size_t)nvert * 36;
+	g_leo.vb.assign(d.begin() + p, d.begin() + p + vsize);
+	p += vsize;
+	g_leo.ib.resize(nidx);
+	memcpy(g_leo.ib.data(), d.data() + p, (size_t)nidx * 4);
+	p += (size_t)nidx * 4;
+	for (uint32 i = 0; i < ntex; i++) {
+		uint32 w, h;
+		memcpy(&w, d.data() + p, 4); memcpy(&h, d.data() + p + 4, 4);
+		p += 8;
+		g_leo.tex.push_back(std::vector<uint8>(d.begin() + p, d.begin() + p + (size_t)w * h * 4));
+		p += (size_t)w * h * 4;
+	}
+	SDL_Log("лео-меш: %u саба, верт %u, инд %u, текстур %u", nsub, nvert, nidx, ntex);
+	return true;
+}
+
+static void uploadLeoGL()
+{
+	if (g_leo.vb.empty())
+		return;
+	glGenVertexArrays(1, &g_leo.vao);
+	glGenBuffers(1, &g_leo.vbo);
+	glGenBuffers(1, &g_leo.ibo);
+	glBindVertexArray(g_leo.vao);
+	glBindBuffer(GL_ARRAY_BUFFER, g_leo.vbo);
+	glBufferData(GL_ARRAY_BUFFER, g_leo.vb.size(), g_leo.vb.data(), GL_STATIC_DRAW);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_leo.ibo);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, g_leo.ib.size() * 4, g_leo.ib.data(), GL_STATIC_DRAW);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 36, (void *)(uintptr)0);
+	glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 36, (void *)(uintptr)12);
+	glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, 36, (void *)(uintptr)24);
+	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 36, (void *)(uintptr)28);
+	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+	glEnableVertexAttribArray(2);
+	glEnableVertexAttribArray(3);
+	glBindVertexArray(0);
+	for (auto &tx : g_leo.tex) {
+		GLuint t;
+		glGenTextures(1, &t);
+		glBindTexture(GL_TEXTURE_2D, t);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 256, 256, 0, GL_RGBA, GL_UNSIGNED_BYTE, tx.data());
+		g_leo.glTex.push_back(t);
+	}
+	SDL_Log("лео-GL: vao+ibo(%zu idx)+текстуры(%zu) готовы", g_leo.ib.size(), g_leo.glTex.size());
+}
+
 
 
 static const char *VS = R"(#version 300 es
 uniform mat4 u_mvp;
+uniform vec4 u_leoOff;   // xyz смещение, w поворот Y
 layout(location=0) in vec3 a_pos;
 layout(location=1) in vec4 a_col;
 layout(location=2) in vec2 a_uv;
@@ -317,7 +409,14 @@ layout(location=3) in vec3 a_nrm;
 out vec4 v_col;
 out vec2 v_uv;
 out vec3 v_nrm;
-void main(){ gl_Position = u_mvp * vec4(a_pos, 1.0); v_col = a_col; v_uv = a_uv; v_nrm = a_nrm; })";
+void main(){
+  vec3 tp = a_pos;
+  if (u_leoOff.w != 0.0) {
+    float ca = cos(u_leoOff.w), sa = sin(u_leoOff.w);
+    tp.xz = mat2(ca, sa, -sa, ca) * tp.xz;
+  }
+  tp += u_leoOff.xyz;
+  gl_Position = u_mvp * vec4(tp, 1.0); v_col = a_col; v_uv = a_uv; v_nrm = a_nrm; })";
 
 static const char *FS = R"(#version 300 es
 precision mediump float;
@@ -338,7 +437,7 @@ void main(){
   fragColor = vec4(min(c * u_boost, vec3(1.0)), 1.0); })";
 
 static GLuint g_prog, g_vao, g_vbo, g_ibo;
-static GLint g_locMvp = -1, g_locBoost = -1, g_locTex = -1, g_locColMix = -1;
+static GLint g_locMvp = -1, g_locBoost = -1, g_locTex = -1, g_locColMix = -1, g_locLeoOff = -1;
 static std::vector<GLuint> g_texArr;
 static GLuint g_whiteTex = 0;
 static int g_texErrCount;
@@ -385,6 +484,7 @@ static void buildGL(const std::vector<uint8> &verts, const std::vector<uint32> &
 	g_locBoost = glGetUniformLocation(g_prog, "u_boost");
 	g_locTex = glGetUniformLocation(g_prog, "u_tex");
 	g_locColMix = glGetUniformLocation(g_prog, "u_colMix");
+	g_locLeoOff = glGetUniformLocation(g_prog, "u_leoOff");
 
 	glGenVertexArrays(1, &g_vao);
 	glGenBuffers(1, &g_vbo);
@@ -428,6 +528,7 @@ static void buildGL(const std::vector<uint8> &verts, const std::vector<uint32> &
 	glBindTexture(GL_TEXTURE_2D, 0);
 	glBindVertexArray(0);
 	SDL_Log("GL: программа+VBO(%zu Б)+IBO(%zu Б)+текстуры(%d) готовы", verts.size(), idx.size() * 4, n);
+	uploadLeoGL();   // Лео: VAO/VBO/IBO + 2 текстуры RGBA
 }
 
 // --- матрицы ---
@@ -614,6 +715,9 @@ int main(int argc, char *argv[])
 		std::vector<uint8> sk = loadAssetBin("mh2leo_skel.bin");
 		if (!sk.empty())
 			parseLeoSkel(sk);
+		std::vector<uint8> lm = loadAssetBin("mh2leo_mesh.bin");
+		if (!lm.empty())
+			parseLeoMesh(lm);
 		std::vector<uint8> mm = loadAssetBin(MESH_ASSET);
 		if (!mm.empty() && parseMegamesh(mm)) {
 			buildGL(g_verts, g_idx);
@@ -728,7 +832,7 @@ int main(int argc, char *argv[])
 						float f0 = floorAt(eyeX, eyeZ, py);
 						if (f0 > -1e8f) { fy = f0; break; }
 					}
-					if (fy > -1e8f) eyeY = fy + EYE_H;
+					if (fy > -1e8f) { eyeY = fy + EYE_H; g_walkFl = fy; }
 					SDL_Log("спавн: пол=%.1f глаз=%.1f", fy, eyeY);
 				}
 				float fl = -1e9f;
@@ -761,17 +865,18 @@ int main(int argc, char *argv[])
 					float k = dt * 10.0f; if (k > 1.0f) k = 1.0f;
 					eyeY += (fl + EYE_H - eyeY) * k;
 				}
-				ex = eyeX; eyr = eyeY; ez = eyeZ;
-				tx = ex + fx; ty = eyr + fy; tz = ez + fz;
+				if (fl > -1e8f)
+					g_walkFl = fl;
+				// камера от 3-го лица: за спиной Лео
+				ex = eyeX - fx * 2.9f; eyr = eyeY + 1.35f; ez = eyeZ - fz * 2.9f;
+				tx = eyeX + fx * 1.5f; ty = fl + 1.15f;    tz = eyeZ + fz * 1.5f;
 				if (++nmanlog % 120 == 1)
 					SDL_Log("ходьба: pos=(%.1f,%.1f,%.1f) пол=%.1f yaw=%.2f pitch=%.2f",
 					        ex, eyr, ez, fl, camYaw, camPitch);
 			} else {
 				// две фазы: god-view → street-level
 				float phase = fmodf(t / 22.0f, 2.0f);
-				static float skelShow = 14.0f;
-				if (skelShow > 0.0f && g_skelVerts > 0) {   // дебют скелета Лео: близкий облёт
-					skelShow -= dt;
+				if (g_leo.vao && !g_leo.vb.empty()) {        // авто: облёт Лео от 3-го лица
 					static float syaw = -0.6f;
 					syaw += dt * 0.35f;
 					tx = cx;
@@ -860,6 +965,27 @@ int main(int argc, char *argv[])
 				glDrawElements(GL_TRIANGLES, (GLsizei)s.numIdx, GL_UNSIGNED_INT,
 				               (void *)(uintptr)(s.firstIdx * 4));
 			}
+			// --- Лео: меш с текстурами (у центра/под игроком) ---
+			if (g_leo.vao && !g_leo.vb.empty()) {
+				static bool leoBaseInit = false;
+				if (!leoBaseInit) {
+					leoBaseInit = true;
+					float ft = floorAt(cx, cz, cy + 2.0f);
+					g_leoBaseY = (ft > -1e8f) ? ft + 0.05f : g_bmin[1] + 0.05f;
+				}
+				glUniformMatrix4fv(g_locMvp, 1, GL_FALSE, mvp);
+				glUniform4f(g_locLeoOff, txLeo, tyLeo, tzLeo, yawLeo);
+				glUniform1f(g_locBoost, 1.25f);
+				glUniform1f(g_locColMix, 0.0f);
+				glBindVertexArray(g_leo.vao);
+				for (auto &s : g_leo.subs) {
+					glBindTexture(GL_TEXTURE_2D, g_leo.glTex[s.tex]);
+					glDrawElements(GL_TRIANGLES, (GLsizei)s.nidx, GL_UNSIGNED_INT,
+					               (void *)(uintptr)(s.ifirst * 4));
+				}
+				glBindVertexArray(g_vao);
+				glUniform4f(g_locLeoOff, 0.0f, 0.0f, 0.0f, 0.0f);
+			}
 			// --- скелет Лео: линии bone(родитель→потомок) у центра, поверх ---
 			if (!g_skel.empty() && !g_skelBuilt) {
 				g_skelBuilt = true;
@@ -867,10 +993,18 @@ int main(int argc, char *argv[])
 				float ft = floorAt(cx, cz, cy + 2.0f);
 				if (ft > -1e8f)
 					g_skelBaseY = ft + 0.05f;
+				g_leoBaseY = g_skelBaseY;
 				buildLeoSkelMesh(g_skelBaseY, cx, cz);
 			}
-			if (g_skelVerts > 0) {
-				glLineWidth(3.0f);
+			// позиция/поворот Лео: стоя у центра, в ручном — под игроком, yaw по камере
+			float txLeo = cx, tyLeo = g_leoBaseY, tzLeo = cz, yawLeo = 0.0f;
+			if (manual) {
+				txLeo = eyeX;
+				tyLeo = g_walkFl;
+				tzLeo = eyeZ;
+				yawLeo = camYaw + 3.141593f;
+			}
+			if (g_skelVerts > 0 && !g_leo.vao) {   // кости — только пока нет меша
 				glUniformMatrix4fv(g_locMvp, 1, GL_FALSE, mvp);
 				glUniform1f(g_locColMix, 1.0f);
 				glUniform1f(g_locBoost, 1.4f);
