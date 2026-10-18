@@ -495,7 +495,7 @@ int main(int argc, char *argv[])
 			glBindVertexArray(g_vao);
 			glUseProgram(g_prog);
 			glUniformMatrix4fv(g_locMvp, 1, GL_FALSE, mvp);
-			glUniform1f(g_locBoost, 2.2f);
+			glUniform1f(g_locBoost, 5.0f);
 			glUniform1i(g_locTex, 0);
 			glUniform3f(g_locMatcol, 1.0f, 1.0f, 1.0f);
 			glActiveTexture(GL_TEXTURE0);
