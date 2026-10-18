@@ -486,6 +486,7 @@ int main(int argc, char *argv[])
 				SDL_Log("ввод получен — демо продолжает работать");
 		}
 
+		Uint64 frameStart = SDL_GetTicks();
 		float t = (float)(SDL_GetTicks() - t0) * 0.001f;
 
 		RGBA col;
@@ -592,7 +593,10 @@ int main(int argc, char *argv[])
 		}
 		cam->endUpdate();
 		cam->showRaster(0);
-		SDL_Delay(6);
+		// cap ~30 fps: экономим батарею, GPU не перегреваем
+		int frameMs = 33 - (int)(SDL_GetTicks() - frameStart);
+		if (frameMs > 0)
+			SDL_Delay(frameMs);
 	}
 
 	if (haveLevel) {
