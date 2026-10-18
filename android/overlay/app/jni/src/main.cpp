@@ -374,7 +374,7 @@ int main(int argc, char *argv[])
 			} else {
 				yaw = t * 0.15f;
 				float rr = (spanX > spanZ ? spanX : spanZ) * 0.18f + 6.0f;
-				eyr = g_bmin[1] + 2.5f;
+				eyr = g_bmin[1] + 6.0f;
 				ex = cx + rr * cosf(yaw);
 				ez = cz + rr * sinf(yaw);
 				tx = ex - sinf(yaw);
