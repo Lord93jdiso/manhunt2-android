@@ -390,6 +390,10 @@ int main(int argc, char *argv[])
 			float high = cy + orbit * 0.35f;
 			V3d campos = makeV3d(cx + orbit * cosf(yaw), high, cz + orbit * sinf(yaw));
 			V3d camdir = normalize(makeV3d(cx - campos.x, cy + 2.0f - campos.y, cz - campos.z));
+			static int nlog;
+			if (++nlog%%30 == 1)
+				SDL_Log("кам: t=%%.1f yaw=%%.2f pos=(%%.1f,%%.1f,%%.1f) dir=(%%.2f,%%.2f,%%.2f)",
+				        t, yaw, campos.x, campos.y, campos.z, camdir.x, camdir.y, camdir.z);
 
 			Matrix m;
 			m.setIdentity();
