@@ -47,15 +47,17 @@ jobs:
           cp -r android/overlay/. build-app/
           # манифест: альбомная ориентация + рендер в область выреза (без чёрных рамок)
           python3 - <<'PYEOF'
-          p = 'build-app/app/src/main/AndroidManifest.xml'
-          s = open(p).read()
-          if 'screenOrientation' not in s:
-              s = s.replace('<activity', '<activity\n              android:screenOrientation="sensorLandscape"', 1)
-          if 'windowLayoutInDisplayCutoutMode' not in s:
-              s = s.replace('<activity', '<activity\n              android:windowLayoutInDisplayCutoutMode="shortEdges"', 1)
-          open(p, 'w').write(s)
+          rstxt = 'build-app/app/src/main/AndroidManifest.xml'
+          rsw = open(rstxt).read()
+          if 'screenOrientation' not in rsw:
+              rsw = rsw.replace('<activity', '<activity\n              android:screenOrientation="sensorLandscape"', 1)
+          if 'windowLayoutInDisplayCutoutMode' not in rsw:
+              rsw = rsw.replace('<activity', '<activity\n              android:windowLayoutInDisplayCutoutMode="shortEdges"', 1)
+          # активити — наш immersive-класс (он же SDLActivity)
+          rsw = rsw.replace('android:name="SDLActivity"', 'android:name=".MainActivity"', 1)
+          open(rstxt, 'w').write(rsw)
           print('манифест пропатчен')
-          print(s)
+          print(rsw)
           PYEOF
           mkdir -p build-app/app/libs/arm64-v8a
           cp "$RUNNER_TEMP/sdl3/lib/libSDL3.so" build-app/app/libs/arm64-v8a/
