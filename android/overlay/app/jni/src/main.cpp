@@ -593,10 +593,7 @@ int main(int argc, char *argv[])
 		}
 		cam->endUpdate();
 		cam->showRaster(0);
-		// cap ~30 fps: экономим батарею, GPU не перегреваем
-		int frameMs = 33 - (int)(SDL_GetTicks() - frameStart);
-		if (frameMs > 0)
-			SDL_Delay(frameMs);
+		SDL_Delay(6);
 	}
 
 	if (haveLevel) {
