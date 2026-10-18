@@ -1,7 +1,15 @@
-import struct, gzip, math, io, os, re
+import struct, gzip, math, io, os, re, sys
 
-d = open('/tmp/opencode/scene1_pc.bsp.raw','rb').read()
-t = open('/tmp/opencode/scene1_pc.tex.raw','rb').read()
+# Универсальный запуск:  conv_bsp_tex.py [bsp_in] [tex_in] [out_base]
+#   bsp_in / tex_in — распакованные Z2HM (*.raw) файлы сцены;
+#   out_base — база имён вывода: <out_base>.bin = меш,
+#     "<out_base>" с заменой '_mesh' на '_texmap'/'_texall' — материалы/текстуры.
+# Без аргументов — прежний дефолт (сцена 1, пути и имена файлов байт-в-байт те же).
+BSP_IN = sys.argv[1] if len(sys.argv) > 1 else '/tmp/opencode/scene1_pc.bsp.raw'
+TEX_IN = sys.argv[2] if len(sys.argv) > 2 else '/tmp/opencode/scene1_pc.tex.raw'
+OUT = sys.argv[3] if len(sys.argv) > 3 else '/tmp/opencode/mh2mesh'
+d = open(BSP_IN,'rb').read()
+t = open(TEX_IN,'rb').read()
 
 def U32(a, s=d): return struct.unpack('<I', s[a:a+4])[0]
 def F32(a, s=d): return struct.unpack('<f', s[a:a+4])[0]
@@ -84,7 +92,11 @@ for (o,smc,ic,vc,base) in res:
         out_subs.append((vbase, vc, ibase+start, cnt, mat, bx))
 
 # ---------------- BSP material table ----------------
-MTAB = 0x361F4C; MCNT = 132
+# Положение таблицы материалов — из DLRW-заголовка (у сцены 1 это те же
+# 0x361F4C/132, что были захардкожены):
+MTAB = U32(0x50); MCNT = U32(0x54)
+if not (0 < MCNT and MTAB + MCNT*12 <= len(d)) or not (0 < MTAB < len(d)):
+    raise SystemExit('BAD B header material table (%s): mtab=%#x cnt=%d' % (BSP_IN, MTAB, MCNT))
 mats=[]
 for i in range(MCNT):
     a = MTAB + i*12
@@ -182,20 +194,23 @@ for (vbase,vc,ibase,cnt,mat,bx) in out_subs:
     b.write(struct.pack('<IIIIi', vbase, vc, ibase, cnt, mat)); b.write(struct.pack('<6f', *bx))
 b.write(b"".join(out_verts))
 for x in out_idx: b.write(struct.pack('<I', x))
-open('/tmp/opencode/mh2mesh.bin','wb').write(b.getvalue())
+TEXM_P = OUT.replace('mesh','texmap')
+TEXA_P = OUT.replace('mesh','texall')
+open(OUT+'.bin','wb').write(b.getvalue())
 
 b = io.BytesIO(); b.write(b'TEXM'); b.write(struct.pack('<I', MCNT))
 for (idx, (r,g,bl)) in matmap:
     b.write(struct.pack('<hBBB', idx, r, g, bl))
-open('/tmp/opencode/mh2texmap.bin','wb').write(b.getvalue())
+open(TEXM_P+'.bin','wb').write(b.getvalue())
 
 b = io.BytesIO(); b.write(b'TEXA'); b.write(struct.pack('<I', len(hdrs)))
 for (nm,w,h,sz) in hdrs:
     b.write(struct.pack('<HHI', w, h, sz))
 b.write(bytes(texdata))
-open('/tmp/opencode/mh2texall.bin','wb').write(b.getvalue())
+open(TEXA_P+'.bin','wb').write(b.getvalue())
 
-for nm in ('mh2mesh','mh2texmap','mh2texall'):
-    with gzip.open('/tmp/opencode/%s.bin.gz'%nm,'wb') as f:
-        f.write(open('/tmp/opencode/%s.bin'%nm,'rb').read())
-print("DONE raw sizes: mesh=%d map=%d tex=%d" % (os.path.getsize('/tmp/opencode/mh2mesh.bin'), os.path.getsize('/tmp/opencode/mh2texmap.bin'), os.path.getsize('/tmp/opencode/mh2texall.bin')))
+OUTS = [OUT+'.bin', TEXM_P+'.bin', TEXA_P+'.bin']
+for bp in OUTS:
+    with gzip.open(bp+'.gz','wb') as f:
+        f.write(open(bp,'rb').read())
+print("DONE raw sizes: mesh=%d map=%d tex=%d" % tuple(os.path.getsize(p) for p in OUTS))

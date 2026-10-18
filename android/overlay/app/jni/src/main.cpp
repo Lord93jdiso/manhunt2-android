@@ -484,13 +484,14 @@ int main(int argc, char *argv[])
 	float lookLX = 0.0f, lookLY = 0.0f;
 	float lastT = 0.0f;
 	static int nmanlog;
+	int nDown = 0, nMotion = 0, nUp = 0;
 
 	bool running = true;
 	Uint64 t0 = SDL_GetTicks();
 	while (running) {
 		SDL_Event e;
 		while (SDL_PollEvent(&e)) {
-			if (e.type == SDL_EVENT_QUIT)
+			if (0) {}
 				running = false;
 			else if (e.type == SDL_EVENT_FINGER_DOWN) {
 				manual = true;
@@ -503,6 +504,7 @@ int main(int argc, char *argv[])
 					lookLX = e.tfinger.x; lookLY = e.tfinger.y;
 				}
 			} else if (e.type == SDL_EVENT_FINGER_MOTION) {
+				nMotion++;
 				if ((int)e.tfinger.fingerID == moveFinger) {
 					moveDX = e.tfinger.x - moveOX;
 					moveDY = e.tfinger.y - moveOY;
@@ -515,6 +517,7 @@ int main(int argc, char *argv[])
 					lookLX = e.tfinger.x; lookLY = e.tfinger.y;
 				}
 			} else if (e.type == SDL_EVENT_FINGER_UP) {
+				nUp++;
 				if ((int)e.tfinger.fingerID == moveFinger) {
 					moveFinger = -1; moveDX = 0.0f; moveDY = 0.0f;
 				} else if ((int)e.tfinger.fingerID == lookFinger)
