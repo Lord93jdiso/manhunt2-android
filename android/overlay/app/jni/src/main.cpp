@@ -491,7 +491,7 @@ int main(int argc, char *argv[])
 	while (running) {
 		SDL_Event e;
 		while (SDL_PollEvent(&e)) {
-			if (0) {}
+			if (e.type == SDL_EVENT_QUIT)
 				running = false;
 			else if (e.type == SDL_EVENT_FINGER_DOWN) {
 				manual = true;
