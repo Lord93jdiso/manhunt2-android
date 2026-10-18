@@ -48,8 +48,10 @@ static std::vector<uint8> loadAssetBin(const char *name)
 	uint8 buf[65536];
 	for (int ni = 0; ni < 2; ni++) {
 		SDL_IOStream *io = SDL_IOFromFile(names[ni], "rb");
-		if (!io)
+		if (!io) {
+			SDL_Log("loadAsset %s: нет (%s)", names[ni], SDL_GetError());
 			continue;
+		}
 		size_t sz = SDL_GetIOSize(io);
 		uint8 *raw = new uint8[sz];
 		bool ok = SDL_ReadIO(io, raw, sz) == sz;
