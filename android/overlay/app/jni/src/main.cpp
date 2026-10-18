@@ -475,6 +475,16 @@ int main(int argc, char *argv[])
 	float spanZ = g_bmax[2] - g_bmin[2];
 	float orbit = (spanX > spanZ ? spanX : spanZ) * 0.65f + 10.0f;
 
+	// --- ручное управление (тач): левая половина = движение, правая = взгляд ---
+	bool manual = false;
+	float camYaw = 0.0f, camPitch = -0.05f;
+	float eyeX = cx, eyeY = g_bmin[1] + 2.0f, eyeZ = cz;
+	int moveFinger = -1, lookFinger = -1;
+	float moveOX = 0.0f, moveOY = 0.0f, moveDX = 0.0f, moveDY = 0.0f;
+	float lookLX = 0.0f, lookLY = 0.0f;
+	float lastT = 0.0f;
+	static int nmanlog;
+
 	bool running = true;
 	Uint64 t0 = SDL_GetTicks();
 	while (running) {
@@ -482,12 +492,42 @@ int main(int argc, char *argv[])
 		while (SDL_PollEvent(&e)) {
 			if (e.type == SDL_EVENT_QUIT)
 				running = false;
-			else if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_KEY_DOWN)
-				SDL_Log("ввод получен — демо продолжает работать");
+			else if (e.type == SDL_EVENT_FINGER_DOWN) {
+				manual = true;
+				if (e.tfinger.x < 0.5f) {
+					moveFinger = (int)e.tfinger.fingerID;
+					moveOX = e.tfinger.x; moveOY = e.tfinger.y;
+					moveDX = 0.0f; moveDY = 0.0f;
+				} else {
+					lookFinger = (int)e.tfinger.fingerID;
+					lookLX = e.tfinger.x; lookLY = e.tfinger.y;
+				}
+			} else if (e.type == SDL_EVENT_FINGER_MOTION) {
+				if ((int)e.tfinger.fingerID == moveFinger) {
+					moveDX = e.tfinger.x - moveOX;
+					moveDY = e.tfinger.y - moveOY;
+				} else if ((int)e.tfinger.fingerID == lookFinger) {
+					// пробег разделяется на каждый фрейм: копим полный сдвиг
+					camYaw -= (e.tfinger.x - lookLX) * 2.6f;
+					camPitch -= (e.tfinger.y - lookLY) * 2.0f;
+					if (camPitch > 1.4f) camPitch = 1.4f;
+					if (camPitch < -1.4f) camPitch = -1.4f;
+					lookLX = e.tfinger.x; lookLY = e.tfinger.y;
+				}
+			} else if (e.type == SDL_EVENT_FINGER_UP) {
+				if ((int)e.tfinger.fingerID == moveFinger) {
+					moveFinger = -1; moveDX = 0.0f; moveDY = 0.0f;
+				} else if ((int)e.tfinger.fingerID == lookFinger)
+					lookFinger = -1;
+			}
 		}
 
 		Uint64 frameStart = SDL_GetTicks();
 		float t = (float)(SDL_GetTicks() - t0) * 0.001f;
+		float dt = t - lastT;
+		if (dt < 0.001f) dt = 0.001f;
+		if (dt > 0.5f) dt = 0.5f;
+		lastT = t;
 
 		RGBA col;
 		col.red = 10; col.green = 10; col.blue = 14; col.alpha = 255;
@@ -495,28 +535,52 @@ int main(int argc, char *argv[])
 		cam->clear(&col, Camera::CLEARIMAGE | Camera::CLEARZ);
 
 		if (haveLevel) {
-			// две фазы: god-view → street-level
-			float phase = fmodf(t / 22.0f, 2.0f);
 			float yaw, ex, eyr, ez, tx = cx, ty = cy, tz = cz;
-			if (phase < 1.0f) {
-				yaw = t * 0.12f;
-				eyr = cy + spanY * 0.9f;
-				ex = cx + orbit * cosf(yaw);
-				ez = cz + orbit * sinf(yaw);
+			if (manual) {
+				// движение: вперёд по -Y тача, вбок по +X
+				float cp = cosf(camPitch), sp = sinf(camPitch);
+				float sy = sinf(camYaw), cyaw = cosf(camYaw);
+				float fx = cp * sy, fy = sp, fz = -cp * cyaw;   // вперёд
+				float rx = cyaw, rz = sy;                        // вправо (без pitch)
+				float speed = 7.0f;
+				if (!(moveFinger < 0)) {
+					float mvx = moveDX * 2.2f, mvy = moveDY * 2.2f;
+					if (mvx > 1.6f) mvx = 1.6f; if (mvx < -1.6f) mvx = -1.6f;
+					if (mvy > 1.6f) mvy = 1.6f; if (mvy < -1.6f) mvy = -1.6f;
+					eyeX += (fx * -mvy + rx * mvx) * speed * dt;
+					eyeY += (fy * -mvy) * speed * dt;
+					eyeZ += (fz * -mvy + rz * mvx) * speed * dt;
+					if (eyeY < g_bmin[1] + 1.0f) eyeY = g_bmin[1] + 1.0f;
+					if (eyeY > g_bmax[1] - 1.0f) eyeY = g_bmax[1] - 1.0f;
+				}
+				ex = eyeX; eyr = eyeY; ez = eyeZ;
+				tx = ex + fx; ty = eyr + fy; tz = ez + fz;
+				if (++nmanlog % 120 == 1)
+					SDL_Log("кам(man): pos=(%.1f,%.1f,%.1f) yaw=%.2f pitch=%.2f",
+					        ex, eyr, ez, camYaw, camPitch);
 			} else {
-				yaw = t * 0.15f;
-				float rr = (spanX > spanZ ? spanX : spanZ) * 0.18f + 6.0f;
-				eyr = g_bmin[1] + 6.0f;
-				ex = cx + rr * cosf(yaw);
-				ez = cz + rr * sinf(yaw);
-				tx = ex - sinf(yaw);
-				tz = ez + cosf(yaw);
-				ty = eyr + 0.5f;
+				// две фазы: god-view → street-level
+				float phase = fmodf(t / 22.0f, 2.0f);
+				if (phase < 1.0f) {
+					yaw = t * 0.12f;
+					eyr = cy + spanY * 0.9f;
+					ex = cx + orbit * cosf(yaw);
+					ez = cz + orbit * sinf(yaw);
+				} else {
+					yaw = t * 0.15f;
+					float rr = (spanX > spanZ ? spanX : spanZ) * 0.18f + 6.0f;
+					eyr = g_bmin[1] + 6.0f;
+					ex = cx + rr * cosf(yaw);
+					ez = cz + rr * sinf(yaw);
+					tx = ex - sinf(yaw);
+					tz = ez + cosf(yaw);
+					ty = eyr + 0.5f;
+				}
+				static int nlog;
+				if (++nlog % 60 == 1)
+					SDL_Log("кам%s: pos=(%.1f,%.1f,%.1f) цел=(%.1f,%.1f,%.1f)",
+					        phase < 1.0f ? "(god)" : "(street)", ex, eyr, ez, tx, ty, tz);
 			}
-			static int nlog;
-			if (++nlog % 60 == 1)
-				SDL_Log("кам%s: pos=(%.1f,%.1f,%.1f) цел=(%.1f,%.1f,%.1f)",
-				        phase < 1.0f ? "(god)" : "(street)", ex, eyr, ez, tx, ty, tz);
 
 			float proj[16], view[16], mvp[16];
 			matPerspective(proj, 70.0f, (float)w / (float)h, 0.2f, 800.0f);
