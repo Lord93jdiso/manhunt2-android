@@ -236,7 +236,7 @@ void main(){
   fragColor = vec4(min(c, vec3(1.0)), 1.0); })";
 
 static GLuint g_prog, g_vao, g_vbo, g_ibo;
-static GLint g_locMvp = -1, g_locBoost = -1, g_locMatcol = -1, g_locTex = -1;
+static GLint g_locMvp = -1, g_locBoost = -1, g_locMatcol = -1, g_locTex = -1, g_locScrW = -1;
 static std::vector<GLuint> g_texArr;
 static GLuint g_whiteTex = 0;
 
@@ -281,7 +281,7 @@ static void buildGL(const std::vector<uint8> &verts, const std::vector<uint32> &
 	g_locMvp = glGetUniformLocation(g_prog, "u_mvp");
 	g_locBoost = glGetUniformLocation(g_prog, "u_boost");
 	g_locMatcol = glGetUniformLocation(g_prog, "u_matcol");
-	GLint locScrW = glGetUniformLocation(g_prog, "u_scrw");
+	g_locScrW = glGetUniformLocation(g_prog, "u_scrw");
 	g_locTex = glGetUniformLocation(g_prog, "u_tex");
 
 	glGenVertexArrays(1, &g_vao);
@@ -499,7 +499,7 @@ int main(int argc, char *argv[])
 			glUseProgram(g_prog);
 			glUniformMatrix4fv(g_locMvp, 1, GL_FALSE, mvp);
 			glUniform1f(g_locBoost, 1.25f);
-			glUniform1f(locScrW, (float)w);
+			glUniform1f(g_locScrW, (float)w);
 			glUniform1i(g_locTex, 0);
 			glUniform3f(g_locMatcol, 1.0f, 1.0f, 1.0f);
 			glActiveTexture(GL_TEXTURE0);
