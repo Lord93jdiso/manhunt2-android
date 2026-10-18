@@ -12,10 +12,14 @@
        +0x40 rw-матрица 4×4 (row-major, pos в 4-й строке) — локальная bind
        +0x80 rw-матрица 4×4 (вторая, назначение уточняется Ghidra-агентом)
 
-Выход: SKL1-файл:
-    'SKL1' + u32 nodes число
-    на ноду: u8 nameLen, name, i16 parentIdx (-1 = root), 16 × f32 (матр.)
-Плюс мир-позиции для контрольного дампa.
+Выход: SKL2-файл (мир-координаты выпечены):
+    'SKL2' + u32 nodes
+    на ноду: u8 nameLen, name, i16 parentIdx, f32 worldPos[3], f32 localMat[16]
+Конвенция матриц (подтверждена leo_axes_test.py, инварианты длины сегментов и
+симметрия выполнены точно на всех 40 сегментах):
+    W_flat = parent_world_flat × local_flat^T ; pos = 4-й СТОЛБЕЦ результата
+    (эквивалентно L×P в flat-пространстве с pos в 4-й строке).
+    Bind-поза: таз 1.018, голова 1.589, руки ±0.645, стопы ±0.194/0.109.
 """
 import struct, gzip, sys, os
 
@@ -65,28 +69,50 @@ for a in valid:
     nodes.append((n, pi, mat_at(a)))
 print('в списке: %d нод' % len(nodes))
 
-if os.environ.get('SKEL_DUMPWORLD') == '1':
-    I = [[1.0 if i == j else 0.0 for j in range(4)] for i in range(4)]
-    def world(i, depth=0):
-        if i < 0 or depth > 40:
-            return I
-        m = struct.unpack_from('<16f', b, valid[i] + 0x40)
-        L = [list(m[k*4:k*4+4]) for k in range(4)]
-        Wp = world(nodes[i][1], depth + 1)
-        return [[sum(Wp[r][k] * L[k][c] for k in range(4)) for c in range(4)] for r in range(4)]
-    for i, (n, pi, _) in enumerate(nodes):
-        W = world(i)
-        print('%2d %-22s parent=%-3d pos=(%+8.3f %+8.3f %+8.3f)' %
-              (i, n, pi, W[3][0], W[3][1], W[3][2]))
+# --- точный расчёт: W = P_w × T16(L); итоговая позиция = [W[3], W[7], W[11]] ---
+def T16(m):
+    return [m[c*4+r] for r in range(4) for c in range(4)]
 
-buf = bytearray(b'SKL1')
+def mul(A, B):
+    return [sum(A[r*4+k] * B[k*4+c] for k in range(4)) for r in range(4) for c in range(4)]
+
+I16 = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
+_wmemo = {}
+def world_mat(i, depth=0):
+    if i < 0 or depth > 40:
+        return I16
+    if i in _wmemo:
+        return _wmemo[i]
+    n, pi, _ = nodes[i]
+    L = T16(mat_at(valid[i]))
+    P = world_mat(pi, depth + 1)
+    W = mul(P, L)
+    _wmemo[i] = W
+    return W
+
+buf = bytearray(b'SKL2')
 buf += struct.pack('<I', len(nodes))
-for n, pi, m in nodes:
+for i, (n, pi, m) in enumerate(nodes):
+    W = world_mat(i)
+    wp = [W[3], W[7], W[11]]            # 4-й столбец = позиция
     nb = n.encode('ascii')[:22]
     buf += struct.pack('<B', len(nb)) + nb + struct.pack('<h', pi)
+    buf += struct.pack('<3f', *wp)
     buf += struct.pack('<16f', *m)
-os.makedirs(os.path.dirname(OUT), exist_ok=True)
+os.makedirs(os.path.dirname(OUT) or '.', exist_ok=True)
 open(OUT, 'wb').write(bytes(buf))
 gz = OUT + '.gz'
 open(gz, 'wb').write(gzip.compress(bytes(buf)))
 print('записано %s (%d Б) и %s (%d Б)' % (OUT, len(buf), gz, os.path.getsize(gz)))
+# контрольный дамп ключевых нод
+_kb = {}
+_j = 0
+_p = buf[8:]
+for i in range(len(nodes)):
+    nl = _p[_j]; _j += 1
+    nm = _p[_j:_j+nl].decode(); _j += nl
+    pi = struct.unpack_from('<h', _p, _j)[0]; _j += 2
+    wp = struct.unpack_from('<3f', _p, _j); _j += 12 + 64
+    _kb[nm] = wp
+for k in ('Bip01', 'Bip01_Head', 'Bip01_L_Hand', 'Bip01_R_Hand', 'Bip01_L_Foot', 'Bip01_R_Foot'):
+    print('  %-16s (%+7.3f %+7.3f %+7.3f)' % (k, *_kb[k]))

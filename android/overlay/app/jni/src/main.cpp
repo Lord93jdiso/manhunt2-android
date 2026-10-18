@@ -230,17 +230,19 @@ static bool parseTexall(const std::vector<uint8> &data)
 	return n > 0 && databytes <= g_texData.size();
 }
 
-// --- скелет Лео (SKL1) ---
+// --- скелет Лео (SKL2: мир-позиции выпечены конвертером) ---
 
-struct SkelNode { std::string name; int16 parent; float m[16]; };
+struct SkelNode { std::string name; int16 parent; float w[3]; float m[16]; };
 static std::vector<SkelNode> g_skel;
 static GLuint g_skelVao = 0, g_skelVbo = 0;
 static GLsizei g_skelVerts = 0;
+static bool g_skelBuilt = false;
+static float g_skelBaseY = 0.0f;
 
 static bool parseLeoSkel(const std::vector<uint8> &data)
 {
-	if (data.size() < 8 || memcmp(data.data(), "SKL1", 4) != 0) {
-		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "skel: неверная магия");
+	if (data.size() < 8 || memcmp(data.data(), "SKL2", 4) != 0) {
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "skel: неверная магия (ждём SKL2)");
 		return false;
 	}
 	uint32 n = rd32(data.data() + 4);
@@ -252,47 +254,16 @@ static bool parseLeoSkel(const std::vector<uint8> &data)
 		p += nl;
 		memcpy(&g_skel[i].parent, p, 2);
 		p += 2;
+		memcpy(g_skel[i].w, p, 12);
+		p += 12;
 		memcpy(g_skel[i].m, p, 64);
 		p += 64;
 	}
-	SDL_Log("skel: %u нод, пример: %s", n, g_skel[0].name.c_str());
+	SDL_Log("скелет SKL2: %u нод, пример: %s", n, g_skel[0].name.c_str());
 	return n > 0;
 }
 
-// мир-матрица ноды: row-major, локаль из ноды, родитель слева
-static void skelWorld(int i, float out[16], std::vector<int> &depth)
-{
-	if (i < 0 || (size_t)i >= g_skel.size())
-		return;
-	const float *L = g_skel[i].m;
-	int pi = g_skel[i].parent;
-	if (pi < 0 || depth[i] >= 0) {
-		memcpy(out, L, 64);
-		depth[i] = 0;
-		return;
-	}
-	float P[16];
-	skelWorld(pi, P, depth);
-	for (int r = 0; r < 4; r++)
-		for (int c = 0; c < 4; c++) {
-			float s = 0;
-			for (int k = 0; k < 4; k++)
-				s += P[r * 4 + k] * L[k * 4 + c];
-			out[r * 4 + c] = s;
-		}
-	depth[i] = 0;
-}
-
-[[maybe_unused]] static void translate(float out[16], const float m[16], float ox, float oy, float oz)
-{
-	float T[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, ox,oy,oz,1 };
-	// out = T × m
-	for (int r = 0; r < 4; r++)
-		for (int c = 0; c < 4; c++)
-			out[r * 4 + c] = T[r] * m[c] + T[4 + r] * m[4 + c] + T[8 + r] * m[8 + c] + T[12 + r] * m[12 + c];
-}
-
-static void buildLeoSkelMesh(float ftY)
+static void buildLeoSkelMesh(float ftY, float ox, float oz)
 {
 	long nv = (long)g_skel.size();
 	std::vector<uint8> verts(nv * 2 * 36);
@@ -306,13 +277,6 @@ static void buildLeoSkelMesh(float ftY)
 		float tuv[2] = { 0, 0 };
 		memcpy(verts.data() + off, tuv, 8); off += 8;
 	};
-	std::vector<int> depth(g_skel.size(), -1);
-	std::vector<std::array<float, 3>> wp(g_skel.size());
-	for (size_t i = 0; i < g_skel.size(); i++) {
-		float W[16];
-		skelWorld((int)i, W, depth);
-		wp[i] = { W[12], W[13], W[14] };
-	}
 	for (size_t i = 0; i < g_skel.size(); i++) {
 		int pi = g_skel[i].parent;
 		if (pi < 0)
@@ -321,8 +285,8 @@ static void buildLeoSkelMesh(float ftY)
 		uint8 r = 255, g = 40, bcol = 240;                 // кости — маджента
 		if (nm.find("Bip01") == std::string::npos) { r = 255; g = 240; bcol = 40; }  // слоты — жёлтый
 		if (nm.find("Leo_") == 0) { r = 40; g = 240; bcol = 240; }                   // модель — циан
-		emit(wp[pi][0], wp[pi][1] + ftY, wp[pi][2], r, g, bcol);
-		emit(wp[i][0], wp[i][1] + ftY, wp[i][2], r, g, bcol);
+		emit(ox + g_skel[pi].w[0], ftY + g_skel[pi].w[1], oz + g_skel[pi].w[2], r, g, bcol);
+		emit(ox + g_skel[i].w[0], ftY + g_skel[i].w[1], oz + g_skel[i].w[2], r, g, bcol);
 	}
 	g_skelVerts = (GLsizei)(off / 36);
 	glGenVertexArrays(1, &g_skelVao);
@@ -339,8 +303,7 @@ static void buildLeoSkelMesh(float ftY)
 	glEnableVertexAttribArray(2);
 	glEnableVertexAttribArray(3);
 	glBindVertexArray(0);
-	SDL_Log("скелет: %d сегментов, левая модель z=%+7.3f y=%+7.3f", g_skelVerts / 2,
-	        wp.empty() ? 0.f : wp[2][2], wp.empty() ? 0.f : wp[2][1]);
+	SDL_Log("скелет: %d сегментов, база y=%.2f центр=(%.1f,%.1f)", g_skelVerts / 2, ftY, ox, oz);
 }
 
 
@@ -806,7 +769,18 @@ int main(int argc, char *argv[])
 			} else {
 				// две фазы: god-view → street-level
 				float phase = fmodf(t / 22.0f, 2.0f);
-				if (phase < 1.0f) {
+				static float skelShow = 14.0f;
+				if (skelShow > 0.0f && g_skelVerts > 0) {   // дебют скелета Лео: близкий облёт
+					skelShow -= dt;
+					static float syaw = -0.6f;
+					syaw += dt * 0.35f;
+					tx = cx;
+					tz = cz;
+					ty = g_skelBaseY + 1.05f;
+					ex = cx + 2.3f * cosf(syaw);
+					ez = cz + 2.3f * sinf(syaw);
+					eyr = g_skelBaseY + 1.25f;
+				} else if (phase < 1.0f) {
 					yaw = t * 0.12f;
 					eyr = cy + spanY * 0.9f;
 					ex = cx + orbit * cosf(yaw);
@@ -886,24 +860,25 @@ int main(int argc, char *argv[])
 				glDrawElements(GL_TRIANGLES, (GLsizei)s.numIdx, GL_UNSIGNED_INT,
 				               (void *)(uintptr)(s.firstIdx * 4));
 			}
-			// --- скелет Лео: линии bone(родитель→потомок) на полу у центра ---
-			if (!g_skel.empty()) {
-				static bool skelBuilt = false;
-				if (!skelBuilt) {
-					skelBuilt = true;
-					float skelFtY = g_bmin[1] + 0.05f;
-					float ft = floorAt(cx, cz, cy + 2.0f);
-					if (ft > -1e8f)
-						skelFtY = ft + 0.05f;
-					buildLeoSkelMesh(skelFtY);
-				}
+			// --- скелет Лео: линии bone(родитель→потомок) у центра, поверх ---
+			if (!g_skel.empty() && !g_skelBuilt) {
+				g_skelBuilt = true;
+				g_skelBaseY = g_bmin[1] + 0.05f;
+				float ft = floorAt(cx, cz, cy + 2.0f);
+				if (ft > -1e8f)
+					g_skelBaseY = ft + 0.05f;
+				buildLeoSkelMesh(g_skelBaseY, cx, cz);
+			}
+			if (g_skelVerts > 0) {
 				glLineWidth(3.0f);
 				glUniformMatrix4fv(g_locMvp, 1, GL_FALSE, mvp);
 				glUniform1f(g_locColMix, 1.0f);
 				glUniform1f(g_locBoost, 1.4f);
 				glBindTexture(GL_TEXTURE_2D, g_whiteTex);
 				glBindVertexArray(g_skelVao);
+				glDisable(GL_DEPTH_TEST);          // кости видны сквозь геометрию
 				glDrawArrays(GL_LINES, 0, g_skelVerts);
+				glEnable(GL_DEPTH_TEST);
 				glBindVertexArray(g_vao);
 				glUniform1f(g_locColMix, 0.0f);
 			}
