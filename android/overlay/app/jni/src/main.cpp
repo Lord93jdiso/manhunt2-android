@@ -12,6 +12,7 @@
 #include <zlib.h>
 #include <vector>
 #include <string>
+#include <algorithm>
 #include <math.h>
 #include <string.h>
 #include <stdint.h>
@@ -98,6 +99,22 @@ struct SubMesh
 };
 
 static std::vector<SubMesh> g_subs;
+static std::vector<uint32> g_drawOrder;	// порядок отрисовки: сгруппирован по текстуре
+
+static void buildDrawOrder(void)
+{
+	size_t n = g_subs.size();
+	std::vector<int> texOf(n);
+	for (size_t i = 0; i < n; i++) {
+		int mi = (int)g_subs[i].mat;
+		texOf[i] = (mi >= 0 && mi < g_nmat) ? (int)g_matTex[mi] : -1;
+	}
+	g_drawOrder.resize(n);
+	for (size_t i = 0; i < n; i++)
+		g_drawOrder[i] = (uint32)i;
+	std::sort(g_drawOrder.begin(), g_drawOrder.end(),
+	          [&texOf](size_t a, size_t b) { return texOf[a] < texOf[b]; });
+}
 static std::vector<uint8> g_verts;	// 36Б: pos f32×3 | normal f32×3 | rgba u8×4 | uv f32×2
 static std::vector<uint32> g_idx;
 static float g_bmin[3], g_bmax[3];
@@ -440,6 +457,7 @@ int main(int argc, char *argv[])
 		std::vector<uint8> mm = loadAssetBin(MESH_ASSET);
 		if (!mm.empty() && parseMegamesh(mm)) {
 			buildGL(g_verts, g_idx);
+			buildDrawOrder();
 			haveLevel = true;
 			if (!t_ok)
 				SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "текстуры не загрузились — цветной режим");
@@ -525,9 +543,10 @@ int main(int argc, char *argv[])
 					planes[p][k] = a + sgn * b;
 				}
 			}
-			size_t total = 0, drawn = 0;
-			for (size_t i = 0; i < g_subs.size(); i++) {
-				const SubMesh &s = g_subs[i];
+			size_t total = 0, drawn = 0, binds = 0;
+			GLuint curTex = (GLuint)-1;
+			for (size_t oi = 0; oi < g_drawOrder.size(); oi++) {
+				const SubMesh &s = g_subs[g_drawOrder[oi]];
 				if (s.numIdx == 0)
 					continue;
 				total++;
@@ -548,7 +567,11 @@ int main(int argc, char *argv[])
 				if (mi >= 0 && mi < g_nmat && g_matTex[mi] >= 0 &&
 				    g_matTex[mi] < (int)g_texArr.size())
 					tex = g_texArr[g_matTex[mi]];
-				glBindTexture(GL_TEXTURE_2D, tex);
+				if (tex != curTex) {
+					glBindTexture(GL_TEXTURE_2D, tex);
+					curTex = tex;
+					binds++;
+				}
 				glDrawElements(GL_TRIANGLES, (GLsizei)s.numIdx, GL_UNSIGNED_INT,
 				               (void *)(uintptr)(s.firstIdx * 4));
 			}
@@ -568,7 +591,7 @@ int main(int argc, char *argv[])
 		}
 		cam->endUpdate();
 		cam->showRaster(0);
-		SDL_Delay(16);
+		SDL_Delay(6);
 	}
 
 	if (haveLevel) {
