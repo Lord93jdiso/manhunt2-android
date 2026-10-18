@@ -45,6 +45,18 @@ jobs:
           cp -r "$RUNNER_TEMP/SDL/android-project" build-app
           rm -f build-app/app/jni/src/YourSourceHere.c
           cp -r android/overlay/. build-app/
+          # манифест: альбомная ориентация + рендер в область выреза (без чёрных рамок)
+          python3 - <<'PYEOF'
+          p = 'build-app/app/src/main/AndroidManifest.xml'
+          s = open(p).read()
+          if 'screenOrientation' not in s:
+              s = s.replace('<activity', '<activity\n              android:screenOrientation="sensorLandscape"', 1)
+          if 'windowLayoutInDisplayCutoutMode' not in s:
+              s = s.replace('<activity', '<activity\n              android:windowLayoutInDisplayCutoutMode="shortEdges"', 1)
+          open(p, 'w').write(s)
+          print('манифест пропатчен')
+          print(s)
+          PYEOF
           mkdir -p build-app/app/libs/arm64-v8a
           cp "$RUNNER_TEMP/sdl3/lib/libSDL3.so" build-app/app/libs/arm64-v8a/
           echo "--- нативные файлы проекта:"

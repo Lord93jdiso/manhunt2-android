@@ -473,6 +473,8 @@ int main(int argc, char *argv[])
 	(void)argc;
 	(void)argv;
 
+	// жёстко альбомная ориентация (иначе камера создаётся от портретного окна и изображение сплюснуто)
+	SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeRight");
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SDL_Init: %s", SDL_GetError());
 		return 1;
@@ -509,6 +511,7 @@ int main(int argc, char *argv[])
 	if (window)
 		SDL_GetWindowSizeInPixels(window, &w, &h);
 	SDL_Log("окно librw: %dx%d", w, h);
+	int camW = w, camH = h;
 
 	Camera *cam = Camera::create();
 	cam->setFrame(Frame::create());
@@ -603,6 +606,21 @@ int main(int argc, char *argv[])
 		if (dt < 0.001f) dt = 0.001f;
 		if (dt > 0.5f) dt = 0.5f;
 		lastT = t;
+
+		// поворот экрана: пересоздаём растр камеры под реальный размер окна
+		{
+			int cw = camW, ch = camH;
+			SDL_GetWindowSizeInPixels(window, &cw, &ch);
+			if (cw != camW || ch != camH) {
+				camW = cw; camH = ch;
+				cam->frameBuffer->destroy();
+				cam->zBuffer->destroy();
+				cam->frameBuffer = Raster::create(cw, ch, 0, Raster::CAMERA);
+				cam->zBuffer = Raster::create(cw, ch, 0, Raster::ZBUFFER);
+				cam->setFOV(70.0f, (float)cw / (float)ch);
+				SDL_Log("камера под поворот: %dx%d", cw, ch);
+			}
+		}
 
 		RGBA col;
 		col.red = 10; col.green = 10; col.blue = 14; col.alpha = 255;
