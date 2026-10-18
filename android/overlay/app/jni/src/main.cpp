@@ -1,12 +1,11 @@
-// Manhunt 2 → Android: bring-up №5 — ПОЛНЫЙ УРОВЕНЬ A01 из BSP-мешей.
+// Manhunt 2 → Android: bring-up №6 — ПОЛНЫЙ УРОВЕНЬ С ТЕКСТУРАМИ.
 //
-// Реверсом снят формат mesh-объектов BSP (см. docs/ghidra/map.md Приложение В):
-//   объект: smc@+0x0C icnt@+0x10 vcnt@+0x30 flag@+0x48 fvf@+0x70=0x252
-//   подмеш 44Б: bbox(6×f32), u32@+24=(mat<<16|count), u32@+28=(unk<<16|start)
-//   индексы: u16 сразу после подмеш-записей
-//   вершины 40Б: pos 12Б, junk 8Б, diffuse@+20 [B,G,R,A], uv@+24 (u,v f32), pad 8Б
-// Питон-конвертер уже распаковал всё в один компактный ассет (mm формат MMH1):
-//   mh2mesh.bin.gz — 'MMH1' мегамеш: {subs,verts,idx (u32 глоб.), bbox}
+// bpp 5 Kumpulan: bring-up №5 рендерил все 71 меш BSP из мегамеша (цвета вершин).
+// Теперь добавлены:
+//   mh2texmap.bin  — TEXM: 132 материалы → {texIdx i16, цвет RGB u8×3}
+//   mh2texall.bin  — TEXA: 149 текстур {w,h,size RGB565} + пиксели (DXT1/3/5 декодированы
+//                    и перевёрнуты по Y конвертером tools/conv_bsp_mesh + tex)
+// Шейдер: цвет = vertexDiffuse × materialColor × texture(uv) × boost.
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <rw.h>
@@ -20,7 +19,9 @@
 
 using namespace rw;
 
-#define MESH_ASSET   "mh2mesh.bin"	/* MMH1 мегамеш   */
+#define MESH_ASSET    "mh2mesh.bin"	/* MMH: мегамеш    */
+#define TEXMAP_ASSET  "mh2texmap.bin"	/* TEXM: материалы */
+#define TEXALL_ASSET  "mh2texall.bin"	/* TEXA: текстуры  */
 
 static uint32 rd32(const uint8 *b)
 {
@@ -87,26 +88,23 @@ static std::vector<uint8> loadAssetBin(const char *name)
 	return std::vector<uint8>();
 }
 
-// --- MMH1 мегамеш ---
+// --- мегамеш ---
 
 struct SubMesh
 {
-	uint32 firstVert;	// глобальный баз вершин (уже вшит в индексы)
-	uint32 numVerts;
-	uint32 firstIdx;	// глобальный баз индексов
-	uint32 numIdx;
-	int32 mat;		// индекс в материальной таблице BSP (132)
+	uint32 firstVert, numVerts, firstIdx, numIdx;
+	int32 mat;
 	float bbox[6];
 };
 
 static std::vector<SubMesh> g_subs;
-static std::vector<uint8> g_verts;	// 24Б: pos f32×3 | rgba u8×4 (RGBA) | uv f32×2
+static std::vector<uint8> g_verts;	// 24Б: pos f32×3 | rgba u8×4 | uv f32×2
 static std::vector<uint32> g_idx;
 static float g_bmin[3], g_bmax[3];
 
 static bool parseMegamesh(const std::vector<uint8> &data)
 {
-	if (data.size() < 36 || memcmp(data.data(), "MMH1", 4) != 0) {
+	if (data.size() < 40 || memcmp(data.data(), "MMH1", 4) != 0) {
 		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "megamesh: неверная магия");
 		return false;
 	}
@@ -142,11 +140,76 @@ static bool parseMegamesh(const std::vector<uint8> &data)
 	p += (size_t)nvert * 24;
 	g_idx.resize(nidx);
 	memcpy(g_idx.data(), p, (size_t)nidx * 4);
-	SDL_Log("megamesh: разобран, %u подмешей", nsub);
+ SDL_Log("megamesh: разобран");
 	return nsub > 0 && nvert > 0 && nidx > 0;
 }
 
-// --- GL: шейдер, буферы ---
+// --- материалы и текстуры ---
+
+struct TexEntry { uint16 w, h; uint32 off; };
+
+static std::vector<TexEntry> g_tex;
+static std::vector<uint8> g_texData;
+static std::vector<int16> g_matTex;
+static std::vector<float> g_matCol;	// 3 на материал
+static int g_nmat;
+
+static bool parseTexmap(const std::vector<uint8> &data)
+{
+	if (data.size() < 8 || memcmp(data.data(), "TEXM", 4) != 0) {
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "texmap: неверная магия");
+		return false;
+	}
+	int n = (int)rd32(data.data() + 4);
+	size_t need = 8 + (size_t)n * 5;
+	if ((int)data.size() - 8 < (int)need) {
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "texmap: коротко");
+		return false;
+	}
+	g_nmat = n;
+	g_matTex.resize(n);
+	g_matCol.resize(n * 3);
+	const uint8 *p = data.data() + 8;
+	for (int i = 0; i < n; i++) {
+		g_matTex[i] = (int16)(uint32)(p[0] | (p[1] << 8));
+		g_matCol[i * 3 + 0] = p[2] / 255.0f;
+		g_matCol[i * 3 + 1] = p[3] / 255.0f;
+		g_matCol[i * 3 + 2] = p[4] / 255.0f;
+		p += 5;
+	}
+	SDL_Log("texmap: %d материалов", n);
+	return n > 0;
+}
+
+static bool parseTexall(const std::vector<uint8> &data)
+{
+	if (data.size() < 8 || memcmp(data.data(), "TEXA", 4) != 0) {
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "texall: неверная магия");
+		return false;
+	}
+	int n = (int)rd32(data.data() + 4);
+	const uint8 *p = data.data() + 8;
+	size_t hdrend = 8 + (size_t)n * 8;
+	if ((int)data.size() - 8 < (int)hdrend) {
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "texall: коротко");
+		return false;
+	}
+	g_tex.resize(n);
+	size_t databytes = 0;
+	for (int i = 0; i < n; i++) {
+		g_tex[i].w = (uint16)(p[0] | (p[1] << 8));
+		g_tex[i].h = (uint16)(p[2] | (p[3] << 8));
+		uint32 sz = rd32(p + 4);
+		g_tex[i].off = (uint32)databytes;
+		databytes += sz;
+		p += 8;
+	}
+	g_texData.assign(data.begin() + hdrend, data.end());
+	SDL_Log("texall: %d текстур, данных %.1fMB", n, databytes / 1e6);
+	return n > 0 && databytes <= g_texData.size();
+}
+
+// --- GL ---
 
 static const char *VS = R"(#version 300 es
 uniform mat4 u_mvp;
@@ -161,12 +224,19 @@ static const char *FS = R"(#version 300 es
 precision mediump float;
 in vec4 v_col;
 in vec2 v_uv;
+uniform sampler2D u_tex;
+uniform vec3 u_matcol;
 uniform float u_boost;
 out vec4 fragColor;
-void main(){ fragColor = vec4(min(v_col.rgb * u_boost, vec3(1.0)), 1.0); })";
+void main(){
+  vec3 tc = texture(u_tex, v_uv).rgb;
+  vec3 c = v_col.rgb * u_matcol * tc * u_boost;
+  fragColor = vec4(min(c, vec3(1.0)), 1.0); })";
 
 static GLuint g_prog, g_vao, g_vbo, g_ibo;
-static GLint g_locMvp = -1, g_locBoost = -1;
+static GLint g_locMvp = -1, g_locBoost = -1, g_locMatcol = -1, g_locTex = -1;
+static std::vector<GLuint> g_texArr;
+static GLuint g_whiteTex = 0;
 
 static GLuint makeShader(GLenum type, const char *src)
 {
@@ -181,6 +251,14 @@ static GLuint makeShader(GLenum type, const char *src)
 		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "шейдер: %s", log);
 	}
 	return sh;
+}
+
+static void setupTexParams(void)
+{
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 }
 
 static void buildGL(const std::vector<uint8> &verts, const std::vector<uint32> &idx)
@@ -200,6 +278,8 @@ static void buildGL(const std::vector<uint8> &verts, const std::vector<uint32> &
 	}
 	g_locMvp = glGetUniformLocation(g_prog, "u_mvp");
 	g_locBoost = glGetUniformLocation(g_prog, "u_boost");
+	g_locMatcol = glGetUniformLocation(g_prog, "u_matcol");
+	g_locTex = glGetUniformLocation(g_prog, "u_tex");
 
 	glGenVertexArrays(1, &g_vao);
 	glGenBuffers(1, &g_vbo);
@@ -215,19 +295,33 @@ static void buildGL(const std::vector<uint8> &verts, const std::vector<uint32> &
 	glEnableVertexAttribArray(0);
 	glEnableVertexAttribArray(1);
 	glEnableVertexAttribArray(2);
+
+	// текстуры (RGB565, mip0, REPEAT)
+	int n = (int)g_tex.size();
+	g_texArr.resize(n);
+	glGenTextures(n, g_texArr.data());
+	for (int i = 0; i < n; i++) {
+		glBindTexture(GL_TEXTURE_2D, g_texArr[i]);
+		setupTexParams();
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB565, g_tex[i].w, g_tex[i].h, 0,
+		             GL_RGB565, GL_UNSIGNED_SHORT_5_6_5,
+		             g_texData.data() + g_tex[i].off);
+	}
+	// белая заглушка
+	glGenTextures(1, &g_whiteTex);
+	glBindTexture(GL_TEXTURE_2D, g_whiteTex);
+	setupTexParams();
+	uint16 white = 0xFFFF;
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB565, 2, 2, 0, GL_RGB565,
+	             GL_UNSIGNED_SHORT_5_6_5, &white);
+	glBindTexture(GL_TEXTURE_2D, 0);
 	glBindVertexArray(0);
-	SDL_Log("GL: программа+VBO(%zu Б)+IBO(%zu Б) готовы", verts.size(), idx.size() * 4);
+	SDL_Log("GL: программа+VBO(%zu Б)+IBO(%zu Б)+текстуры(%d) готовы", verts.size(), idx.size() * 4, n);
 }
 
-// --- матрицы (column-major, как у GLES) ---
+// --- матрицы ---
 
-static void matIdentity(float *m)
-{
-	memset(m, 0, 16 * sizeof(float));
-	m[0] = m[5] = m[10] = m[15] = 1.0f;
-}
-
-static void matMul(float *out, const float *a, const float *b)	// out = a*b
+static void matMul(float *out, const float *a, const float *b)
 {
 	float t[16];
 	for (int c = 0; c < 4; c++)
@@ -295,7 +389,7 @@ int main(int argc, char *argv[])
 	params.fullscreen = true;
 	params.width = 1280;
 	params.height = 720;
-	params.windowtitle = "Manhunt 2 Port — полный уровень (мегамеш)";
+	params.windowtitle = "Manhunt 2 Port — уровень с текстурами";
 
 	if (!Engine::open(&params)) {
 		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "rw::Engine::open — не удалось");
@@ -327,14 +421,21 @@ int main(int argc, char *argv[])
 
 	bool haveLevel = false;
 	{
+		std::vector<uint8> txm = loadAssetBin(TEXMAP_ASSET);
+		std::vector<uint8> txa = loadAssetBin(TEXALL_ASSET);
+		bool t_ok = false;
+		if (!txm.empty() && !txa.empty())
+			t_ok = parseTexmap(txm) && parseTexall(txa);
 		std::vector<uint8> mm = loadAssetBin(MESH_ASSET);
 		if (!mm.empty() && parseMegamesh(mm)) {
 			buildGL(g_verts, g_idx);
 			haveLevel = true;
+			if (!t_ok)
+				SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "текстуры не загрузились — цветной режим");
+		} else if (!t_ok) {
+			SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "мегамеш/текстуры не загружены");
 		}
 	}
-	if (!haveLevel)
-		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "мегамеш не загружен — темный экран");
 
 	float cx = (g_bmin[0] + g_bmax[0]) * 0.5f;
 	float cy = (g_bmin[1] + g_bmax[1]) * 0.5f;
@@ -363,7 +464,7 @@ int main(int argc, char *argv[])
 		cam->clear(&col, Camera::CLEARIMAGE | Camera::CLEARZ);
 
 		if (haveLevel) {
-			// две фазы облёта: god-view сверху → street-level внутри коридоров
+			// две фазы: god-view → street-level
 			float phase = fmodf(t / 22.0f, 2.0f);
 			float yaw, ex, eyr, ez, tx = cx, ty = cy, tz = cz;
 			if (phase < 1.0f) {
@@ -388,13 +489,16 @@ int main(int argc, char *argv[])
 
 			float proj[16], view[16], mvp[16];
 			matPerspective(proj, 70.0f, (float)w / (float)h, 0.2f, 800.0f);
-			matLookAt(view, ex, eyr, ez, cx, cy, cz, 0.0f, 1.0f, 0.0f);
+			matLookAt(view, ex, eyr, ez, tx, ty, tz, 0.0f, 1.0f, 0.0f);
 			matMul(mvp, proj, view);
 
 			glBindVertexArray(g_vao);
 			glUseProgram(g_prog);
 			glUniformMatrix4fv(g_locMvp, 1, GL_FALSE, mvp);
-			glUniform1f(g_locBoost, 2.5f);
+			glUniform1f(g_locBoost, 2.2f);
+			glUniform1i(g_locTex, 0);
+			glUniform3f(g_locMatcol, 1.0f, 1.0f, 1.0f);
+			glActiveTexture(GL_TEXTURE0);
 			glDisable(GL_BLEND);
 			glDisable(GL_CULL_FACE);
 			glEnable(GL_DEPTH_TEST);
@@ -403,6 +507,16 @@ int main(int argc, char *argv[])
 				const SubMesh &s = g_subs[i];
 				if (s.numIdx == 0)
 					continue;
+				int mi = (int)s.mat;
+				GLuint tex = g_whiteTex;
+				if (mi >= 0 && mi < g_nmat && g_matTex[mi] >= 0 &&
+				    g_matTex[mi] < (int)g_texArr.size())
+					tex = g_texArr[g_matTex[mi]];
+				glBindTexture(GL_TEXTURE_2D, tex);
+				glUniform3f(g_locMatcol,
+				            g_matCol[mi * 3 + 0],
+				            g_matCol[mi * 3 + 1],
+				            g_matCol[mi * 3 + 2]);
 				glDrawElements(GL_TRIANGLES, (GLsizei)s.numIdx, GL_UNSIGNED_INT,
 				               (void *)(uintptr)(s.firstIdx * 4));
 			}
@@ -414,6 +528,8 @@ int main(int argc, char *argv[])
 
 	if (haveLevel) {
 		glBindVertexArray(0);
+		glDeleteTextures((GLsizei)g_texArr.size(), g_texArr.data());
+		glDeleteTextures(1, &g_whiteTex);
 		glDeleteBuffers(1, &g_ibo);
 		glDeleteBuffers(1, &g_vbo);
 		glDeleteVertexArrays(1, &g_vao);
@@ -425,6 +541,6 @@ int main(int argc, char *argv[])
 	Engine::close();
 	Engine::term();
 	SDL_Quit();
-	SDL_Log("выход, всё чисто (полный уровень)");
+	SDL_Log("выход, всё чисто (уровень с текстурами)");
 	return 0;
 }
