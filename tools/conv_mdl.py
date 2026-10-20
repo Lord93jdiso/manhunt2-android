@@ -195,7 +195,9 @@ while ai and ai < len(t) and tc < 8:
     name = m.group(0).decode('latin1') if m else 'texNAME?'
     print('TCDT %-14s %dx%d fmt=%d dat=0x%X size=0x%X' % (name, w, h, fmt, dat, size))
     if 8 <= w <= 2048 and 8 <= h <= 2048 and 0 < dat < len(t):
-        rgb565 = dxt_decode(w, h, t[dat:dat + size], fmt, flip=False)
+        # dat указывает на DDS-заголовок (magic 'DDS ', 128 Б) — данные за ним
+        blob = t[dat + 0x80 : dat + size]
+        rgb565 = dxt_decode(w, h, blob, fmt, flip=False)
         img = bytearray(w * h * 4)
         for k in range(w * h):
             c = struct.unpack_from('<H', rgb565, k * 2)[0]
