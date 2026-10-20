@@ -93,21 +93,47 @@ print('пулов:', len(pools))
 # недостающие значения кандидата- gloves: разрывы баз
 # --- 3) сборка индексов: на каждый пул тянем u16-поток до начала следующего пула ---
 # (хвостовые «нерегулярные» листы между квадами попадают в поток)
-# --- 3) сборка индексных потоков (сшитые зоны, фильтр: только валидные индексы) ---
-HEAD_IDX = (0x0CF0, 0x0E8E)            # пул головы: базы 0..138
-BODY_ZONES = [(0x63C4, 0x8A10), (0x8A10, 0x97C4)]   # квад-пулы + хвостовой tri-stream
+# --- 3) сборка индексных потоков ---
+# face: пул головы 0xCF0..0xE8E (207 u16, базы 0..138)
+# body: СТРОГО квад-пулы (ragged-«спицы» между пулами НЕ берём — там справочники)
+HEAD_IDX = (0x0CF0, 0x0E8E)
+
+def quad_hit(o, a):
+    return (u16(o) == a and u16(o + 2) == a + 1 and u16(o + 4) == a + 2 and
+            u16(o + 6) == a + 2 and u16(o + 8) == a + 3 and u16(o + 10) == a)
+
+pools = []
+i = 0x20
+while i < N - 24:
+    a = u16(i)
+    if a + 3 < NV and quad_hit(i, a):
+        j, q = i, 0
+        while j + 12 < N and quad_hit(j, a + q * 4):
+            j += 12; q += 1
+        if q >= 2:
+            pools.append((i, q * 6, a))
+            i = j
+    i += 2
+print('квад-пулов:', len(pools))
 
 idx_face = [u16(o) for o in range(HEAD_IDX[0], HEAD_IDX[1], 2)]
-idx_body = []
-for lo, hi in BODY_ZONES:
-    for o in range(lo, hi, 2):
-        v = u16(o)
-        if 139 <= v < NV:              # global индексы тела
-            idx_body.append(v)
-print('idx face=%d body=%d' % (len(idx_face), len(idx_body)))
-# чистка: face-значения тоже валидируем (< 139)
 idx_face = [v for v in idx_face if 0 <= v < 139]
-print('после валидации: face=%d body=%d' % (len(idx_face), len(idx_body)))
+print('idx face=%d' % len(idx_face))
+
+idx_body = []
+for (s, cnt, a0) in pools:
+    if a0 < 139:
+        continue                      # головной фрагмент — уже в face
+    k = s
+    for _ in range(cnt // 6):
+        # квад = (a,a+1,a+2) + (a+2,a+3,a)
+        t1 = (u16(k), u16(k + 2), u16(k + 4))
+        t2 = (u16(k + 6), u16(k + 8), u16(k + 10))
+        if max(t1) < NV and max(t2) < NV:
+            idx_body.extend(t1)
+            idx_body.extend(t2)
+        k += 12
+print('idx body=%d' % len(idx_body))
 
 # --- 5) контейнер MHP2 ---
 VERT_STRIDE = 36
